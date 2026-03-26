@@ -54,6 +54,19 @@ st.success(f"✅ Loaded {df.shape[0]} rows")
 df['Week'] = pd.to_datetime(df['Week'], errors='coerce')
 df = df.dropna(subset=['Week'])
 
+# -------------------------------
+# 🎛️ FILTER (SAFE ADD)
+# -------------------------------
+st.sidebar.header("Filters")
+selected_week = st.sidebar.selectbox(
+    "Select Week",
+    sorted(df['Week'].dropna().unique())
+)
+df = df[df['Week'] <= selected_week]
+
+# -------------------------------
+# FEATURE ENGINEERING
+# -------------------------------
 df['DSAT'] = df['Customer_Effortless'].apply(lambda x: 1 if str(x).lower() == "no" else 0)
 df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
 
@@ -62,7 +75,6 @@ df['Sentiment'] = df['Customer_Comment'].apply(lambda x: TextBlob(str(x)).sentim
 # -------------------------------
 def label_issue(comment):
     c = str(comment).lower()
-
     if any(w in c for w in ["rude","bad","angry","unhelpful"]):
         return "Communication"
     elif any(w in c for w in ["delay","wait","slow","long"]):
@@ -80,13 +92,6 @@ df['Issue_Label'] = df['Customer_Comment'].apply(label_issue)
 df_clean = df[df['Issue_Label'] != "Other"].copy()
 
 if len(df_clean) > 50:
-
-    noise_ratio = 0.2
-    noise_idx = np.random.choice(df_clean.index, int(len(df_clean)*noise_ratio), replace=False)
-    df_clean.loc[noise_idx, 'Issue_Label'] = np.random.choice(
-        ["Communication","Process","Product"], len(noise_idx)
-    )
-
     train_df, test_df = train_test_split(
         df_clean,
         test_size=0.3,
@@ -102,12 +107,11 @@ if len(df_clean) > 50:
     X_test = vectorizer.transform(test_df['Customer_Comment'])
     y_test = test_df['Issue_Label']
 
-    issue_model = LogisticRegression(max_iter=200, C=0.5)
+    issue_model = LogisticRegression(max_iter=200)
     issue_model.fit(X_train, y_train)
 
     y_pred = issue_model.predict(X_test)
     nlp_accuracy = accuracy_score(y_test, y_pred)
-
 else:
     nlp_accuracy = 0.0
 
@@ -129,11 +133,8 @@ weekly_df = weekly_df.dropna()
 
 features = [f'DSAT_lag_{i}' for i in range(1,5)] + [f'Tickets_lag_{i}' for i in range(1,5)]
 
-X = weekly_df[features]
-y = weekly_df['DSAT_Count']
-
 model = RandomForestRegressor()
-model.fit(X,y)
+model.fit(weekly_df[features], weekly_df['DSAT_Count'])
 
 # -------------------------------
 # SELECT AGENT
@@ -144,7 +145,7 @@ agent_data = weekly_df[weekly_df['Agent_Name']==agent].sort_values('Week')
 latest = agent_data.iloc[-1]
 
 prediction = model.predict([latest[features]])[0]
-risk = (prediction - y.mean())/y.std()*10 + 50
+risk = (prediction - weekly_df['DSAT_Count'].mean())/weekly_df['DSAT_Count'].std()*10 + 50
 
 # -------------------------------
 # METRICS
@@ -172,12 +173,22 @@ c3.metric("Avg Prediction Error", round(agent_mae,2))
 st.subheader("🚨 Alerts & Risk Monitoring")
 
 agent_summary = weekly_df.groupby('Agent_Name')['DSAT_Count'].mean().reset_index()
-agent_summary['Risk'] = (agent_summary['DSAT_Count'] - y.mean())/y.std()*10 + 50
+agent_summary['Risk'] = (agent_summary['DSAT_Count'] - weekly_df['DSAT_Count'].mean())/weekly_df['DSAT_Count'].std()*10 + 50
 
 st.dataframe(agent_summary.sort_values("Risk", ascending=False).head(10))
 
 st.subheader("🟢 Low Risk Agents")
 st.dataframe(agent_summary.sort_values("Risk").head(10))
+
+# -------------------------------
+# 🔥 TOP 5 AGENTS (NEW - CORRECT PLACE)
+# -------------------------------
+st.subheader("🔥 Top 5 Agents to Act On")
+
+top5 = agent_summary.sort_values("Risk", ascending=False).head(5)
+
+for _, row in top5.iterrows():
+    st.markdown(f"**{row['Agent_Name']}** — Risk: **{int(row['Risk'])}**")
 
 # -------------------------------
 # KPI
@@ -191,33 +202,20 @@ st.line_chart(agent_data.set_index('Week')['DSAT_Count'])
 # ISSUE BREAKDOWN
 # -------------------------------
 agent_comments = df[df['Agent_Name']==agent]
-dsat_comments = agent_comments[agent_comments['DSAT']==1]['Customer_Comment']
 
-issues = ["Communication","Process","Product"]
+pred_issues = issue_model.predict(vectorizer.transform(agent_comments['Customer_Comment']))
 
-if len(dsat_comments) > 0:
-    X_test_agent = vectorizer.transform(dsat_comments)
-    pred_issues = issue_model.predict(X_test_agent)
-
-    issue_df = pd.DataFrame(pred_issues, columns=["Issue"])
-    issue_df = issue_df.value_counts().reset_index(name="Count")
-
-    for i in issues:
-        if i not in issue_df["Issue"].values:
-            issue_df = pd.concat([issue_df, pd.DataFrame({"Issue":[i],"Count":[0]})])
-
-else:
-    issue_df = pd.DataFrame({"Issue": issues, "Count": [0,0,0]})
+issue_df = pd.DataFrame(pred_issues, columns=["Issue"])
+issue_df = issue_df.value_counts().reset_index(name="Count")
 
 st.subheader("📊 Issue Breakdown")
 st.dataframe(issue_df)
 st.bar_chart(issue_df.set_index("Issue")["Count"])
 
 # -------------------------------
-# 🤖 AI INSIGHT
+# AI INSIGHT (UNCHANGED LOGIC)
 # -------------------------------
 def generate_ai_insight(agent, pred, risk, issue_df, sentiment, trend):
-
     top_issue = issue_df.sort_values("Count", ascending=False).iloc[0]["Issue"]
 
     if trend > 0:
@@ -246,7 +244,7 @@ st.subheader("🤖 AI Insight")
 st.markdown(generate_ai_insight(agent, prediction, risk, issue_df, sentiment, trend))
 
 # -------------------------------
-# 🎯 SMART COACHING PLAN (TOP 5)
+# 🎯 SMART COACHING PLAN (NEW)
 # -------------------------------
 st.subheader("🎯 Smart Coaching Plan (Top 5)")
 
@@ -256,24 +254,20 @@ plans = []
 
 for _, row in sorted_issues.iterrows():
     issue = row["Issue"]
-    count = row["Count"]
 
     if issue == "Communication":
-        action = "Improve empathy, avoid interruptions, acknowledge concerns clearly"
+        action = "Improve empathy, avoid interruptions, acknowledge concerns"
     elif issue == "Process":
         action = "Reduce wait time, avoid transfers, provide timelines"
     elif issue == "Product":
-        action = "Improve product knowledge, escalate faster, ensure resolution"
+        action = "Improve product knowledge, escalate faster"
     else:
         action = "Monitor performance"
 
     plans.append({
         "Issue": issue,
-        "Cases": int(count),
-        "Priority": "High" if risk > 60 else "Medium",
+        "Cases": int(row["Count"]),
         "Action": action
     })
 
-plan_df = pd.DataFrame(plans)
-
-st.dataframe(plan_df)
+st.dataframe(pd.DataFrame(plans))
