@@ -12,7 +12,7 @@ from sklearn.metrics import accuracy_score, mean_absolute_error
 from textblob import TextBlob
 
 # ─────────────────────────────────────────────
-# PAGE CONFIG
+# PAGE CONFIG & CSS
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="DSAT Intelligence", layout="wide", page_icon="🧠")
 
@@ -154,6 +154,7 @@ def load_and_prep_data():
     df_temp['Sentiment']     = df_temp['Combined_Text'].apply(lambda x: TextBlob(str(x)[:600]).sentiment.polarity)
     df_temp['transcript_len']= df_temp['Chat_Transcript'].fillna('').apply(len)
     
+    # FIXED: Keyword scoring system to stop "People" bias
     def label_issue(text):
         c = str(text).lower()
         scores = {"People": 0, "Process": 0, "Product": 0}
@@ -187,7 +188,7 @@ curr_week    = weeks_sorted[-1]
 prev_week    = weeks_sorted[-2] if len(weeks_sorted) >= 2 else curr_week
 
 # ─────────────────────────────────────────────
-# ML MODEL TRAINING (CACHED)
+# ML MODEL TRAINING (CACHED & FIXED)
 # ─────────────────────────────────────────────
 @st.cache_resource
 def train_models(dataframe):
@@ -196,21 +197,28 @@ def train_models(dataframe):
     iss_model = None
     ret_model = None
     rf_reg = None
-    nlp_acc = 0.0
+    ml_accuracy = 0.0 
     
-    # 1. NLP Classification Model
+    # 1. NLP Classification Model (Kept for feature extraction/PPP routing)
     if len(df_clean) > 50:
-        tr, te = train_test_split(df_clean, test_size=0.3, stratify=df_clean['Issue_Label'], random_state=42)
         vec  = TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1,2))
         iss_model = LogisticRegression(max_iter=300, C=0.5)
-        iss_model.fit(vec.fit_transform(tr['Combined_Text']), tr['Issue_Label'])
-        nlp_acc = accuracy_score(te['Issue_Label'], iss_model.predict(vec.transform(te['Combined_Text'])))
+        iss_model.fit(vec.fit_transform(df_clean['Combined_Text']), df_clean['Issue_Label'])
 
-    # 2. Return Prediction Model
+    # 2. Return Prediction Model (LEGIT ML ACCURACY)
     ret_features  = ['Sentiment','issue_encoded','transcript_len']
     if dataframe['DSAT'].sum() > 10:
+        X_ret = dataframe[ret_features].fillna(0)
+        y_ret = dataframe['DSAT']
+        
+        # Proper train/test split to avoid data leakage
+        X_train, X_test, y_train, y_test = train_test_split(X_ret, y_ret, test_size=0.3, random_state=42)
+        
         ret_model = RandomForestClassifier(n_estimators=100, random_state=42)
-        ret_model.fit(dataframe[ret_features].fillna(0), dataframe['DSAT'])
+        ret_model.fit(X_train, y_train)
+        
+        # Calculate TRUE ML accuracy on unseen test data
+        ml_accuracy = accuracy_score(y_test, ret_model.predict(X_test))
 
     # 3. DSAT Forecasting Model
     weekly_df_temp = dataframe.groupby(['Agent_Name','Week']).agg(
@@ -231,9 +239,9 @@ def train_models(dataframe):
         rf_reg = RandomForestRegressor(n_estimators=100, random_state=42)
         rf_reg.fit(X, y_val)
         
-    return vec, iss_model, nlp_acc, ret_model, rf_reg, weekly_df_temp, lag_feats
+    return vec, iss_model, ml_accuracy, ret_model, rf_reg, weekly_df_temp, lag_feats
 
-vectorizer, issue_model, nlp_accuracy, return_model, rf_model, weekly_df, lag_features = train_models(df)
+vectorizer, issue_model, ml_accuracy, return_model, rf_model, weekly_df, lag_features = train_models(df)
 y = weekly_df['DSAT_Count'] if not weekly_df.empty else pd.Series(dtype=float)
 
 # ─────────────────────────────────────────────
@@ -323,11 +331,22 @@ if not agent_summary_df.empty:
     """, unsafe_allow_html=True)
 
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("NLP Accuracy",        f"{round(nlp_accuracy*100,1)}%")
+    c1.metric("ML Prediction Accuracy", f"{round(ml_accuracy*100,1)}%")
     c2.metric("Critical Agents",     int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
     c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
     c4.metric("Recovering",          int(n_improving), delta_color="normal")
     c5.metric("Team Predicted DSAT", int(team_pred))
+
+# ── Global People / Process / Product
+st.markdown('<div class="section-header">🔍 Team-Wide Root Cause (People vs Process vs Product)</div>', unsafe_allow_html=True)
+dsat_only = df[df['DSAT'] == 1]
+team_ppp, team_total = ppp_counts(dsat_only['Combined_Text'])
+
+tp1, tp2, tp3 = st.columns(3)
+for col_obj, cat, clr in [(tp1,"People","#fb923c"),(tp2,"Process","#facc15"),(tp3,"Product","#34d399")]:
+    v   = team_ppp.get(cat,0)
+    pct = round(v/team_total*100) if team_total > 0 else 0
+    col_obj.metric(f"Total {cat} Complaints", v, delta=f"{pct}% of all Team DSATs")
 
 # ── Global Product & Feature WoW Summary 
 st.markdown('<div class="section-header">📊 Week-on-Week: Top DSAT Drivers (Product & Feature)</div>', unsafe_allow_html=True)
@@ -457,7 +476,6 @@ else:
     st.markdown(f'<div class="sub-header">📦 Top DSAT Product Focus &nbsp;<span style="color:#5a6484;font-size:0.8rem;font-weight:400">({str(prev_week)[:10]} → {str(curr_week)[:10]})</span></div>', unsafe_allow_html=True)
 
     if not ag_dsat.empty:
-        # Identify the single product causing the most DSATs for this agent
         top_product = ag_dsat['Product'].value_counts().index[0]
         
         curr_d = int(ag_all[(ag_all['Week']==curr_week)&(ag_all['Product']==top_product)&(ag_all['DSAT']==1)].shape[0])
