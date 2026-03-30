@@ -19,13 +19,15 @@ import google.generativeai as genai
 # ─────────────────────────────
 # API SETUP
 # ─────────────────────────────
-API_KEY = os.getenv("GEMINI_API_KEY")
-if API_KEY:
+# ─────────────────────────────
+# API SETUP (FINAL SAFE)
+# ─────────────────────────────
+try:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=API_KEY)
     gemini = genai.GenerativeModel("gemini-1.5-flash")
-else:
+except:
     gemini = None
-
 # ─────────────────────────────
 # PAGE
 # ─────────────────────────────
