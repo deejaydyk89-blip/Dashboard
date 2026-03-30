@@ -246,8 +246,7 @@ if len(df_labeled) > 30:
     issue_model = LogisticRegression(
         max_iter=500, C=1.0,
         class_weight='balanced',   # KEY FIX — prevents "People" domination
-        solver='lbfgs',
-        multi_class='multinomial'
+        solver='lbfgs'
     )
     issue_model.fit(
         X_tfidf[tr_idx],
