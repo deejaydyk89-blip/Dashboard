@@ -158,44 +158,44 @@ def simple_sentiment(text):
 df['Sentiment'] = df['Combined_Text'].apply(simple_sentiment)
 
 # ─────────────────────────────────────────────
-# KEYWORD LABELLING (used only to create training targets)
+# KEYWORD LABELLING & ML MASKING 
 # ─────────────────────────────────────────────
-PEOPLE_KW  = ["rude","angry","unhelpful","attitude","unprofessional","frustrat",
-               "no empathy","escalate","supervisor","bad agent","not listening",
-               "dismissive","condescending","impatient","arrogant","yelled",
-               "didn't care","poor service","terrible agent","incompetent","clueless"]
-PROCESS_KW = ["delay","wait","slow","long hold","transfer","transferred",
-               "inefficient","keep asking","repeat","already told",
-               "waiting too long","put on hold","no follow up","no callback",
-               "still waiting","took forever","long wait","asked again","third time"]
-PRODUCT_KW = ["error","bug","failed","not working","broken","limitation",
-               "glitch","crash","outage","system issue","technical","doesn't work",
-               "cannot login","app crash","feature missing","stopped working",
-               "platform issue","website down","login issue","reset not working",
-               "page not loading","server error","keeps crashing","software bug"]
+PRODUCT_PRIORITY_KW = ["bug","error","feature missing","not working","failed","crash","glitch","outage","limitation"]
+PEOPLE_KW  = ["rude","angry","unhelpful","attitude","unprofessional","frustrat","no empathy","escalate","supervisor","bad agent","not listening","dismissive","condescending","impatient","arrogant","yelled","didn't care","poor service","terrible agent","incompetent","clueless", "agent", "support", "friendly", "helpful"]
+PROCESS_KW = ["delay","wait","slow","long hold","transfer","transferred","inefficient","keep asking","repeat","already told","waiting too long","put on hold","no follow up","no callback","still waiting","took forever","long wait","asked again","third time", "steps", "process", "time"]
 
 def label_issue(text):
-    c  = str(text).lower()
+    c = str(text).lower()
+    # Strict Priority Override
+    if any(w in c for w in PRODUCT_PRIORITY_KW): return "Product"
     
-    # REQUIREMENT 3: MUST Classify Product limitations accurately. 
-    # Strict Priority Override -> If it's a bug/error/missing, it's a Product issue.
-    if any(w in c for w in PRODUCT_KW):
-        return "Product"
-        
-    ps = sum(1 for w in PEOPLE_KW  if w in c)
+    ps = sum(1 for w in PEOPLE_KW if w in c)
     rs = sum(1 for w in PROCESS_KW if w in c)
     
     if ps == 0 and rs == 0: return "Other"
     if ps >= rs: return "People"
     return "Process"
 
+# FIXING 100% ACCURACY: Masking keywords from training data forces the ML model to learn the context
+def mask_text(text):
+    c = str(text).lower()
+    all_kws = PRODUCT_PRIORITY_KW + PEOPLE_KW + PROCESS_KW
+    for w in sorted(all_kws, key=len, reverse=True):
+        c = c.replace(w, " ")
+    return c
+
+def final_label(text, ml_pred):
+    c = str(text).lower()
+    if any(w in c for w in PRODUCT_PRIORITY_KW): return "Product"
+    return ml_pred
+
 df['Issue_Label'] = df['Combined_Text'].apply(label_issue)
 
 # ─────────────────────────────────────────────
-# ML MODEL — honest cross-validated accuracy
-# REQUIREMENT 4: ML (TF-IDF + LR Balanced + Cross Validated)
+# ML MODEL — Honest CV accuracy via masked text
 # ─────────────────────────────────────────────
-df_labeled   = df[(df['Issue_Label'] != "Other") & (df['DSAT'] == 1)].copy()
+# We now train on BOTH CSAT and DSAT so it learns positive topics (like 'Transfer events' -> Process)
+df_labeled   = df[df['Issue_Label'] != "Other"].copy()
 nlp_accuracy = 0.0
 vectorizer   = None
 issue_model  = None
@@ -209,7 +209,8 @@ if len(df_labeled) >= 30 and df_labeled['Issue_Label'].nunique() >= 2:
         stop_words='english', max_features=4000,
         ngram_range=(1, 2), sublinear_tf=True, min_df=2
     )
-    X_all = vectorizer.fit_transform(df_labeled['Combined_Text'])
+    # Train entirely on MASKED text
+    X_all = vectorizer.fit_transform(df_labeled['Combined_Text'].apply(mask_text))
     y_all = df_labeled['Issue_Label'].values
 
     n_splits = max(2, min(5, df_labeled['Issue_Label'].value_counts().min()))
@@ -229,7 +230,9 @@ if len(df_labeled) >= 30 and df_labeled['Issue_Label'].nunique() >= 2:
     # Final model on full data for live predictions
     issue_model = LogisticRegression(max_iter=500, C=0.7, class_weight='balanced', solver='lbfgs')
     issue_model.fit(X_all, y_all)
-    df['Issue_Label'] = issue_model.predict(vectorizer.transform(df['Combined_Text']))
+    
+    raw_preds = issue_model.predict(vectorizer.transform(df['Combined_Text'].apply(mask_text)))
+    df['Issue_Label'] = [final_label(t, p) for t, p in zip(df['Combined_Text'], raw_preds)]
 
 # ─────────────────────────────────────────────
 # RETURN PREDICTION MODEL
@@ -296,10 +299,11 @@ def ppp_counts(texts):
     text_list = list(texts)
     cats = ["People","Process","Product"]
     if len(text_list) > 0 and vectorizer and issue_model:
-        preds = issue_model.predict(vectorizer.transform(text_list))
-        cnt   = Counter(preds)
+        preds = issue_model.predict(vectorizer.transform([mask_text(t) for t in text_list]))
+        final_preds = [final_label(t, p) for t, p in zip(text_list, preds)]
+        cnt = Counter(final_preds)
     else:
-        cnt = Counter([label_issue(t) for t in text_list])
+        cnt = Counter([final_label(t, label_issue(t)) for t in text_list])
     total = sum(cnt.get(c,0) for c in cats) or 1
     return cnt, total
 
@@ -307,12 +311,6 @@ def wow_arrow(delta):
     if delta > 0:   return f"<span class='wow-worse'>⬆ +{int(delta)} DSAT</span>"
     elif delta < 0: return f"<span class='wow-better'>⬇ {int(delta)} DSAT</span>"
     else:           return f"<span class='wow-same'>➡ No change</span>"
-
-KW_MAP = {
-    "People":  ["rude","unhelpful","attitude","angry","unprofessional","escalate","supervisor","frustrat","not listening","dismissive"],
-    "Process": ["delay","wait","slow","transfer","hold","multiple","inefficient","keep asking","repeat","already told","again"],
-    "Product": ["error","bug","failed","not working","broken","limitation","glitch","crash","outage","technical","doesn't work"]
-}
 
 # ─────────────────────────────────────────────
 # 5-WHY BUILDER
@@ -387,7 +385,6 @@ n_worsening = (agent_summary_df['Risk Δ'] > 3).sum()
 n_improving = (agent_summary_df['Risk Δ'] < -3).sum()
 top_names   = ", ".join(agent_summary_df[agent_summary_df['Focus Zone']=="🔴 Intervene Now"]['Agent'].tolist()[:3]) or "None"
 team_pred   = int(agent_summary_df['Predicted DSAT'].sum())
-ldist_str   = " · ".join([f"{k}: {v}" for k,v in label_dist.items()]) if label_dist else "N/A"
 
 st.markdown(f"""
 <div class="morning-brief">
@@ -395,8 +392,7 @@ st.markdown(f"""
   <div class="brief-body">
     <b>{n_critical} agent(s) need immediate intervention</b> · {n_watch} on watchlist ·
     {n_worsening} worsening · {n_improving} recovering<br>
-    📌 Immediate focus: <b>{top_names}</b> &nbsp;|&nbsp; 📊 Team predicted DSAT: <b>{team_pred}</b><br>
-    <span style="color:#5a6484;font-size:0.8rem">ML training label distribution (DSAT tickets): {ldist_str}</span>
+    📌 Immediate focus: <b>{top_names}</b> &nbsp;|&nbsp; 📊 Team predicted DSAT: <b>{team_pred}</b>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -412,6 +408,19 @@ c5.metric("Team Predicted DSAT", int(team_pred))
 if model_report:
     with st.expander("🔬 ML Classification Report — cross-validated precision / recall / F1 per class"):
         st.code(model_report)
+
+# =======================================================
+# NEW REQUIREMENT: Overall Issue Breakdown (All-Time) moved here
+# =======================================================
+st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown (All-Time)</div>', unsafe_allow_html=True)
+overall_ppp_team, overall_total_team = ppp_counts(df[df['DSAT']==1]['Combined_Text'])
+
+o1,o2,o3 = st.columns(3)
+for co,cat,_ in [(o1,"People",""),(o2,"Process",""),(o3,"Product","")]:
+    v = overall_ppp_team.get(cat,0)
+    pct = round(v/overall_total_team*100) if overall_total_team>0 else 0
+    co.metric(f"{cat} Issues", v, delta=f"{pct}% of Total DSATs", delta_color="off")
+
 
 st.markdown('<div class="section-header">🎯 Manager Focus Matrix</div>', unsafe_allow_html=True)
 q = {z: agent_summary_df[agent_summary_df['Focus Zone']==z]['Agent'].tolist()
@@ -637,17 +646,6 @@ else:
             pf_wow = pf_wow.sort_values('Change', ascending=False)
             st.dataframe(pf_wow[['Product › Feature', 'This Week', 'Last Week', 'Change']], use_container_width=True, hide_index=True)
 
-
-    # ── Overall PPP
-    st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown (All-Time)</div>', unsafe_allow_html=True)
-    overall_ppp, overall_total = ppp_counts(ag_dsat['Combined_Text'])
-    dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
-
-    o1,o2,o3 = st.columns(3)
-    for co,cat,_ in [(o1,"People",""),(o2,"Process",""),(o3,"Product","")]:
-        v=overall_ppp.get(cat,0); pct=round(v/overall_total*100) if overall_total>0 else 0
-        co.metric(f"{cat} Issues", v, delta=f"{pct}% of DSAT")
-
     # ── Trend charts
     st.markdown('<div class="sub-header">📈 DSAT Trend & Risk Score Over Time</div>', unsafe_allow_html=True)
     ch1,ch2 = st.columns(2)
@@ -727,6 +725,9 @@ else:
     if risk_now < 45:   level,tag_cls = "Strong Performer","tag-strong"
     elif risk_now < 60: level,tag_cls = "Watchlist","tag-watchlist"
     else:               level,tag_cls = "Critical","tag-critical"
+    
+    overall_ppp, overall_total = ppp_counts(ag_dsat['Combined_Text'])
+    dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
 
     w1,w2,w3,w4,w5 = build_5whys(
         agent_name=agent, dominant_cat=dominant_cat,
@@ -817,8 +818,11 @@ else:
     transcript = str(trow['Chat_Transcript'])
     comment    = str(trow['Customer_Comment'])
 
-    ticket_issue = issue_model.predict(vectorizer.transform([combined]))[0] \
-                   if (vectorizer and issue_model) else label_issue(combined)
+    if vectorizer and issue_model:
+        raw_pred = issue_model.predict(vectorizer.transform([mask_text(combined)]))[0]
+        ticket_issue = final_label(combined, raw_pred)
+    else:
+        ticket_issue = label_issue(combined)
 
     if return_model:
         feat_row  = [[trow['Sentiment'], trow['issue_encoded'], trow['transcript_len'], trow['comment_len']]]
@@ -839,7 +843,7 @@ else:
     if not signals: signals.append("✅ No major distress signals detected")
     shtml = "".join([f"<div style='padding:5px 0;color:#c9d1e8;border-bottom:1px solid #1a2235'>{s}</div>" for s in signals])
 
-    # Dynamic Map for CSAT vs DSAT insights
+    # Dynamic CSAT vs DSAT insights 
     is_dsat = trow['DSAT'] == 1
     if is_dsat:
         wwg_label = "What went wrong:"
@@ -916,4 +920,4 @@ else:
 """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · TF-IDF + Balanced LR (5-fold CV) · 5-Why Root Cause · WoW Product & Feature</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · ML Text Masking Override · 5-Why Root Cause · WoW Product & Feature</p>", unsafe_allow_html=True)
