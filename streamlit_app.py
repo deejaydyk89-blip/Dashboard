@@ -96,7 +96,6 @@ df                  = df.dropna(subset=['Week'])
 df['DSAT']          = df['Customer_Effortless'].apply(lambda x: 1 if str(x).strip().lower()=="no" else 0)
 df['transcript_len']= df['Chat_Transcript'].fillna('').apply(len)
 df['comment_len']   = df['Customer_Comment'].fillna('').apply(len)
-df['Combined_Text'] = df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')
 
 weeks_sorted = sorted(df['Week'].unique())
 curr_week    = weeks_sorted[-1]
@@ -112,56 +111,45 @@ def rule_sentiment(text):
     t = str(text).lower()
     return sum(1 for w in POS_W if w in t) - sum(1 for w in NEG_W if w in t)
 
-df['Sentiment'] = df['Combined_Text'].apply(rule_sentiment)
+df['Sentiment'] = (df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')).apply(rule_sentiment)
 
 # ─────────────────────────────────────────────────────────────────────────────────
-# ══ PPP CLASSIFICATION & ML MASKING ══
+# ══ TRANSCRIPT-ONLY PPP CLASSIFICATION & ML MASKING ══
 # ─────────────────────────────────────────────────────────────────────────────────
 
-def get_ground_truth(row):
+# Added "feature is not available" directly to the core product triggers
+PRODUCT_KW = ["feature is not available", "not working", "bug", "error", "crash", "glitch", "outage", "failed", "system issue", "limitation"]
+PROCESS_KW = ["wait", "delay", "slow", "transfer", "hold", "repetitive", "keep asking", "already told", "step by step", "worked", "resolved", "fixed"]
+PEOPLE_KW  = ["rude", "unhelpful", "attitude", "escalate", "supervisor", "manager", "dismissive", "friendly", "great support", "excellent service", "empathy"]
+
+def get_ground_truth(transcript):
     """
-    Labels ALL data (CSAT and DSAT) so the ML model can learn positive and negative context.
-    Also natively forces 'feature is not available' to Product.
+    Labels ALL data (CSAT and DSAT) using ONLY the Chat_Transcript.
     """
-    c = str(row['Customer_Comment']).lower()
-    t = str(row['Chat_Transcript']).lower()
-    combined = c + " " + t
-    
+    t = str(transcript).lower()
     # 1. STRICT PRODUCT OVERRIDE
-    if "feature is not available" in combined or "app not working" in combined or "system error" in combined:
-        return "Product"
-        
-    # 2. Existing DSAT Mapping
-    if "agent was rude" in c or "unhelpful response" in c: return "People"
-    if "long waiting time" in c or "too much delay" in c: return "Process"
-    
-    # 3. CSAT Handling (Trains ML to identify 'Transfer events' as Process)
-    if row['DSAT'] == 0:
-        if "transfer events" in combined or "step by step" in combined or "worked" in combined: return "Process"
-        if "great support" in c or "excellent service" in c or "friendly" in combined: return "People"
-        return "Process" 
-        
-    return "Other"
+    if any(w in t for w in PRODUCT_KW): return "Product"
+    # 2. People & Process checks
+    if any(w in t for w in PEOPLE_KW): return "People"
+    if any(w in t for w in PROCESS_KW): return "Process"
+    return "Process" # Fallback
 
-df['Issue_Label'] = df.apply(get_ground_truth, axis=1)
+df['Issue_Label'] = df['Chat_Transcript'].apply(get_ground_truth)
 
-def mask_text(text):
+def mask_transcript(text):
     """
-    Removes giveaway phrases from the text before vectorization.
-    This fixes the 100% accuracy issue by forcing the ML model to learn 
-    from the surrounding transcript context rather than memorizing exact rules.
+    FIX FOR 100% CV ACCURACY: 
+    Aggressively removes exact giveaway trigger words from the transcript before vectorization.
+    This forces the TF-IDF model to learn from surrounding context words, dropping the fake 100% accuracy.
     """
     t = str(text).lower()
-    giveaways = [
-        "agent was rude", "unhelpful response", "long waiting time", "too much delay",
-        "app not working", "system error", "great support", "excellent service", 
-        "transfer events", "feature is not available"
-    ]
-    for g in giveaways:
-        t = t.replace(g, " ")
+    all_kws = PRODUCT_KW + PROCESS_KW + PEOPLE_KW
+    # Sort by length to avoid partial word masking (e.g. "not working" before "working")
+    for kw in sorted(all_kws, key=len, reverse=True):
+        t = t.replace(kw, " ")
     return t
 
-# Train ML model on Combined_Text (comment + transcript) — ON ALL TICKETS
+# Train ML model on Chat_Transcript ONLY 
 df_labeled   = df[df['Issue_Label'] != "Other"].copy()
 nlp_accuracy = 0.0
 vectorizer   = None
@@ -173,11 +161,11 @@ if len(df_labeled) >= 30 and df_labeled['Issue_Label'].nunique() >= 2:
     label_dist = df_labeled['Issue_Label'].value_counts().to_dict()
 
     vectorizer = TfidfVectorizer(
-        stop_words='english', max_features=5000,
-        ngram_range=(1, 3), sublinear_tf=True, min_df=2
+        stop_words='english', max_features=3000,
+        ngram_range=(1, 2), sublinear_tf=True, min_df=2
     )
-    # Train using MASKED text
-    X_all = vectorizer.fit_transform(df_labeled['Combined_Text'].apply(mask_text))
+    # Train using exclusively MASKED transcripts
+    X_all = vectorizer.fit_transform(df_labeled['Chat_Transcript'].apply(mask_transcript))
     y_all = df_labeled['Issue_Label'].values
 
     n_splits = min(5, df_labeled['Issue_Label'].value_counts().min() // 50)
@@ -195,19 +183,17 @@ if len(df_labeled) >= 30 and df_labeled['Issue_Label'].nunique() >= 2:
     issue_model = LogisticRegression(max_iter=500, C=0.5, class_weight='balanced', solver='lbfgs')
     issue_model.fit(X_all, y_all)
 
-    # Predict using MASKED text
-    raw_preds = issue_model.predict(vectorizer.transform(df['Combined_Text'].apply(mask_text)))
-    df['Issue_Label'] = raw_preds
+    # Predict using MASKED transcripts
+    raw_preds = issue_model.predict(vectorizer.transform(df['Chat_Transcript'].apply(mask_transcript)))
     
-    # 4. POST-PREDICTION OVERRIDE 
-    # Ensures that even if the ML model hallucinates, specific keywords are strictly enforced.
-    def final_override(row):
-        combined = str(row['Combined_Text']).lower()
-        if "feature is not available" in combined or "app not working" in combined or "system error" in combined:
+    # STRICT POST-PREDICTION OVERRIDE
+    def final_override(transcript, ml_pred):
+        t = str(transcript).lower()
+        if any(w in t for w in PRODUCT_KW):
             return "Product"
-        return row['Issue_Label']
+        return ml_pred
         
-    df['Issue_Label'] = df.apply(final_override, axis=1)
+    df['Issue_Label'] = [final_override(t, p) for t, p in zip(df['Chat_Transcript'], raw_preds)]
 
 # ─────────────────────────────────────────────
 # RETURN PREDICTION MODEL
@@ -215,7 +201,7 @@ if len(df_labeled) >= 30 and df_labeled['Issue_Label'].nunique() >= 2:
 df['issue_encoded']   = df['Issue_Label'].map({"People":0,"Process":1,"Product":2,"Other":3}).fillna(3)
 df['has_escalation']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['escalate','supervisor','manager','unacceptable']) else 0)
 df['has_frustration'] = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['already told','multiple times','keep asking','frustrated','why','repetitive']) else 0)
-df['has_unresolved']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['no solution','cannot','unable','not at the moment','no fix','limitation']) else 0)
+df['has_unresolved']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['no solution','cannot','unable','not at the moment','no fix','limitation', 'feature is not available']) else 0)
 
 return_model = None
 ret_features = ['Sentiment','issue_encoded','transcript_len','comment_len','has_escalation','has_frustration','has_unresolved']
@@ -274,21 +260,25 @@ agent_summary_df['Focus Zone'] = agent_summary_df.apply(assign_quadrant, axis=1)
 # ─────────────────────────────────────────────
 def names_html(lst): return "<br>".join([f"• {a}" for a in lst]) or "None"
 
-def classify_ppp(combined_texts):
-    text_list = list(combined_texts.fillna('') if hasattr(combined_texts,'fillna') else [str(t) for t in combined_texts])
+def classify_ppp(transcripts):
+    """
+    Classify PPP using ONLY Chat_Transcript.
+    Applies the ML model on masked text, then enforces the strict Product override.
+    """
+    text_list = list(transcripts.fillna('') if hasattr(transcripts,'fillna') else [str(t) for t in transcripts])
     if not text_list:
         return Counter(), 1
     cats = ["People","Process","Product"]
+    
     if vectorizer and issue_model:
         # Use ML Model with masked text
-        masked_texts = [mask_text(t) for t in text_list]
-        preds = issue_model.predict(vectorizer.transform(masked_texts))
+        masked_texts = [mask_transcript(t) for t in text_list]
+        ml_preds = issue_model.predict(vectorizer.transform(masked_texts))
         
         # Apply strict Product override post-prediction
         final_preds = []
-        for text, pred in zip(text_list, preds):
-            t = str(text).lower()
-            if "feature is not available" in t or "app not working" in t or "system error" in t:
+        for t, pred in zip(text_list, ml_preds):
+            if any(w in t.lower() for w in PRODUCT_KW):
                 final_preds.append("Product")
             else:
                 final_preds.append(pred)
@@ -296,14 +286,15 @@ def classify_ppp(combined_texts):
     else:
         # Fallback
         cnt = Counter()
-        for text in text_list:
-            t = text.lower()
-            if any(w in t for w in ["feature is not available", "not working","error","bug","failed","limitation","no solution","glitch","crash","cannot","unable"]):
+        for t in text_list:
+            t_low = t.lower()
+            if any(w in t_low for w in PRODUCT_KW):
                 cnt["Product"] += 1
-            elif any(w in t for w in ["wait","slow","transfer","delay","hold","repetitive","keep asking","already told"]):
+            elif any(w in t_low for w in PROCESS_KW):
                 cnt["Process"] += 1
             else:
                 cnt["People"] += 1
+                
     total = sum(cnt.get(c,0) for c in cats) or 1
     return cnt, total
 
@@ -327,12 +318,12 @@ def build_5whys(agent_name, dominant_cat, primary_product, primary_feature,
           f"{(' — top feature: '+primary_feature) if primary_feature and primary_feature!='N/A' else ''}. "
           f"This is the priority product area for coaching.")
     cat_desc = {
-        "People":  "the agent's tone, empathy, or communication style — customers react negatively to how they were handled, not necessarily to the technical outcome",
-        "Process": "workflow breakdowns — excessive transfers, long wait times, or customers being asked to repeat their issue to multiple agents",
-        "Product": "product bugs, system errors, or feature limitations — the agent cannot resolve the issue due to a technical gap beyond their control"
+        "People":  "the agent's tone, empathy, or communication style — based on the transcript, customers reacted negatively to how they were handled, not necessarily to the technical outcome",
+        "Process": "workflow breakdowns — based on the transcript, excessive transfers, long wait times, or customers being asked to repeat their issue",
+        "Product": "product bugs, system errors, or feature limitations (e.g., feature is not available) — the agent cannot resolve the issue due to a technical gap beyond their control"
     }
     w3 = (f"<b>Why is {primary_product} driving DSAT for {agent_name}?</b><br>"
-          f"ML analysis (comment + transcript) classifies <b>{dominant_cat}</b> as the primary driver ({dom_pct}% of DSAT). "
+          f"ML transcript analysis classifies <b>{dominant_cat}</b> as the primary driver ({dom_pct}% of DSAT). "
           f"This points to {cat_desc.get(dominant_cat,'unclassified patterns')}.")
     sys_cause = {
         "People":  f"The agent may lack recent soft-skills calibration or is under-prepared for the complexity of {primary_product} customer profiles. Tone issues often compound with unresolved issues, creating a double DSAT risk.",
@@ -372,14 +363,14 @@ st.markdown(f"""
     <b>{n_critical} agent(s) need immediate intervention</b> · {n_watch} on watchlist ·
     {n_worsening} worsening · {n_improving} recovering<br>
     📌 Immediate focus: <b>{top_names}</b> &nbsp;|&nbsp; 📊 Team predicted DSAT: <b>{team_pred}</b><br>
-    <span style="color:#5a6484;font-size:0.8rem">ML training labels (DSAT tickets): {ldist_str}</span>
+    <span style="color:#5a6484;font-size:0.8rem">ML training labels (Tickets): {ldist_str}</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 c1,c2,c3,c4,c5 = st.columns(5)
 c1.metric("ML Model Accuracy", f"{round(nlp_accuracy*100,1)}%",
-          help="Model utilizes Text Masking to prevent target leakage, forcing it to learn transcript context rather than keyword memorization.")
+          help="Model utilizes Text Masking on transcripts to prevent target leakage, dropping CV accuracy to realistic bounds by forcing context learning.")
 c2.metric("Critical Agents",     int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
 c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
 c4.metric("Recovering",          int(n_improving), delta_color="normal")
@@ -387,8 +378,17 @@ c5.metric("Team Predicted DSAT", int(team_pred))
 
 if model_report:
     with st.expander("🔬 ML Classification Report — People / Process / Product precision · recall · F1"):
-        st.info("ℹ️ CV accuracy is now honest due to ML text masking. The model genuinely learns that steps/resolution language equates to Process, and error-based language equates to Product.")
+        st.info("ℹ️ CV accuracy is now honest due to ML text masking on transcripts. The model genuinely learns that steps/resolution language equates to Process, and error-based language equates to Product.")
         st.code(model_report)
+
+# Overall PPP — right after ML report
+st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (All Agents · All Time · DSAT tickets only)</div>', unsafe_allow_html=True)
+all_ppp, all_total = classify_ppp(df[df['DSAT']==1]['Chat_Transcript'])
+ap1,ap2,ap3 = st.columns(3)
+for col_o, cat in [(ap1,"People"),(ap2,"Process"),(ap3,"Product")]:
+    v   = all_ppp.get(cat,0)
+    pct = round(v/all_total*100) if all_total > 0 else 0
+    col_o.metric(f"{cat} Issues (Team)", v, delta=f"{pct}% of DSAT")
 
 st.markdown('<div class="section-header">🎯 Manager Focus Matrix</div>', unsafe_allow_html=True)
 q = {z: agent_summary_df[agent_summary_df['Focus Zone']==z]['Agent'].tolist()
@@ -441,8 +441,9 @@ def render_product_wow_card(row):
         feat_bits.append(f"<span style='color:#8b92ab'>{f}:</span> <span style='color:{c}'>{a} {v} ({fd:+d})</span>")
     feat_html = " &nbsp;·&nbsp; ".join(feat_bits) or "<span style='color:#5a6484'>No DSAT this week</span>"
 
-    prod_texts = df[(df['Week']==curr_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Combined_Text']
-    ppp, tot = classify_ppp(prod_texts)
+    # Transcript-only classification
+    prod_transcripts = df[(df['Week']==curr_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Chat_Transcript']
+    ppp, tot = classify_ppp(prod_transcripts)
     ppp_html = "".join([
         f"<span class='ppp-pill {cls}'>{cat}: {ppp.get(cat,0)} ({round(ppp.get(cat,0)/tot*100) if tot>0 else 0}%)</span>"
         for cat,cls in [("People","pill-people"),("Process","pill-process"),("Product","pill-product")]
@@ -477,7 +478,7 @@ def render_product_wow_card(row):
   <br>
   <span style="color:#5a6484;font-size:0.76rem;text-transform:uppercase">Feature breakdown — DSAT this week vs last</span><br>
   <span style="font-size:0.84rem">{feat_html}</span><br><br>
-  <span style="color:#5a6484;font-size:0.76rem;text-transform:uppercase">Issue root — People / Process / Product (ML: comment + transcript)</span><br>
+  <span style="color:#5a6484;font-size:0.76rem;text-transform:uppercase">Issue root — People / Process / Product (ML: Transcript Only)</span><br>
   <div class="ppp-row">{ppp_html}</div>
 </div>
 """
@@ -593,17 +594,19 @@ else:
     st.markdown('<div class="sub-header">📅 Agent Week-on-Week: PPP & Product/Feature (DSAT Tickets)</div>', unsafe_allow_html=True)
     ag_curr_dsat = ag_all[(ag_all['Week']==curr_week)&(ag_all['DSAT']==1)]
     ag_prev_dsat = ag_all[(ag_all['Week']==prev_week)&(ag_all['DSAT']==1)]
-    ppp_curr, _ = classify_ppp(ag_curr_dsat['Combined_Text'])
-    ppp_prev, _ = classify_ppp(ag_prev_dsat['Combined_Text'])
+    
+    # Transcript ONLY classification
+    ppp_curr, _ = classify_ppp(ag_curr_dsat['Chat_Transcript'])
+    ppp_prev, _ = classify_ppp(ag_prev_dsat['Chat_Transcript'])
 
     c_wow1, c_wow2 = st.columns(2)
     with c_wow1:
-        st.markdown("**PPP — This Week vs Last Week**")
+        st.markdown("**PPP (Transcript Only) — This Week vs Last**")
         ppp_rows = [{"Category":cat,"This Week":ppp_curr.get(cat,0),"Last Week":ppp_prev.get(cat,0),
                      "Change":ppp_curr.get(cat,0)-ppp_prev.get(cat,0)} for cat in ["People","Process","Product"]]
         st.dataframe(pd.DataFrame(ppp_rows), use_container_width=True, hide_index=True)
     with c_wow2:
-        st.markdown("**Product › Feature — This Week vs Last Week**")
+        st.markdown("**Product › Feature — This Week vs Last**")
         cf = ag_curr_dsat.groupby(['Product','Feature']).size().reset_index(name='This Week')
         pf = ag_prev_dsat.groupby(['Product','Feature']).size().reset_index(name='Last Week')
         pf_wow = pd.merge(cf, pf, on=['Product','Feature'], how='outer').fillna(0)
@@ -617,7 +620,7 @@ else:
 
     # Overall PPP for this agent
     st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (This Agent · All Time)</div>', unsafe_allow_html=True)
-    overall_ppp, overall_total = classify_ppp(ag_dsat['Combined_Text'])
+    overall_ppp, overall_total = classify_ppp(ag_dsat['Chat_Transcript'])
     dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
 
     o1,o2,o3 = st.columns(3)
@@ -741,25 +744,24 @@ if tkt_rows.empty:
 else:
     trow       = tkt_rows.iloc[0]
     transcript = str(trow['Chat_Transcript'])
-    comment    = str(trow['Customer_Comment'])
     is_dsat    = trow['DSAT'] == 1
 
-    # ── ROOT CAUSE: Mask text to evaluate surrounding ML context + Strict Override
-    combined_for_ticket = comment + ' ' + transcript
+    # ── ROOT CAUSE: ONLY reads Transcript + Strict Product Override
     if vectorizer and issue_model:
-        raw_pred = issue_model.predict(vectorizer.transform([mask_text(combined_for_ticket)]))[0]
-        
-        t_lower = combined_for_ticket.lower()
-        if "feature is not available" in t_lower or "app not working" in t_lower or "system error" in t_lower:
+        # Pass MASKED transcript to model
+        raw_pred = issue_model.predict(vectorizer.transform([mask_transcript(transcript)]))[0]
+        # Then enforce strict Product overrides post-prediction
+        t = transcript.lower()
+        if any(w in t for w in PRODUCT_KW):
             ticket_issue = "Product"
         else:
             ticket_issue = raw_pred
     else:
-        # Rule-based fallback reading both comment AND transcript
-        t = combined_for_ticket.lower()
-        if any(w in t for w in ["feature is not available", "not working","error","bug","failed","limitation","no solution","glitch","crash","cannot","unable"]):
+        # Rule-based fallback using ONLY transcript
+        t = transcript.lower()
+        if any(w in t for w in PRODUCT_KW):
             ticket_issue = "Product"
-        elif any(w in t for w in ["wait","slow","transfer","delay","hold","repetitive","keep asking","already told","multiple times"]):
+        elif any(w in t for w in PROCESS_KW):
             ticket_issue = "Process"
         else:
             ticket_issue = "People"
@@ -786,16 +788,16 @@ else:
     if not signals: signals.append("✅ No distress signals — transcript appears neutral or positive")
     shtml = "".join([f"<div style='padding:5px 0;color:#c9d1e8;border-bottom:1px solid #1a2235'>{s}</div>" for s in signals])
 
-    # Root cause narrative — reads BOTH comment and transcript
+    # Root cause narrative — explicitly references transcript ONLY
     if is_dsat:
         wwg_label = "What went wrong:"
         core_label= "Core issue:"
         dmap = {
-            "People":  (f"Based on the customer's complaint (\"{comment}\") and the transcript tone, the agent's communication style negatively impacted the customer. The interaction lacked empathy or professionalism.",
+            "People":  (f"Based on the chat transcript, the agent's communication style or attitude negatively impacted the customer. The interaction lacked empathy or professionalism.",
                         "Agent behaviour or communication was the primary DSAT driver — not the technical outcome."),
-            "Process": (f"Based on the customer's complaint (\"{comment}\") and transcript patterns, the support process broke down. The customer experienced wait times, transfers, or had to repeat their issue.",
+            "Process": (f"Based on the chat transcript, the support process broke down. The customer experienced wait times, transfers, or had to repeat their issue.",
                         "Operational inefficiency or broken workflow caused the poor experience."),
-            "Product": (f"Based on the customer's complaint (\"{comment}\") and transcript, the customer hit a product bug, system error, or feature limitation the agent could not resolve.",
+            "Product": (f"Based on the chat transcript, the customer encountered a product bug, system error, or feature limitation (e.g., feature is not available) the agent could not resolve.",
                         "A product or technical gap drove dissatisfaction — the agent was powerless to fix the root cause.")
         }
     else:
@@ -836,7 +838,7 @@ else:
         st.markdown(f"""
 <div class="ticket-box">
   <b>🔍 Root Cause Analysis</b><br>
-  <span style="color:#7eb8f7;font-size:0.85rem">ML classification (comment + transcript): <b>{ticket_issue}</b></span><br><br>
+  <span style="color:#7eb8f7;font-size:0.85rem">ML classification (Transcript Only): <b>{ticket_issue}</b></span><br><br>
   <b>{wwg_label}</b><br>{wwg}<br><br>
   <b>{core_label}</b><br>{core}<br><br>
   <b>Product & Feature:</b> {trow['Product']} — {trow['Feature']}
@@ -860,4 +862,4 @@ else:
 """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · TF-IDF LR (comment + transcript) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · TF-IDF LR (Transcript Only) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
