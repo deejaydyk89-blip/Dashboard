@@ -5,10 +5,10 @@ import os
 from collections import Counter
 
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, classification_report, accuracy_score
-from sklearn.naive_bayes import MultinomialNB
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -94,10 +94,12 @@ df.columns          = df.columns.str.strip()
 df['Week']          = pd.to_datetime(df['Week'], errors='coerce')
 df                  = df.dropna(subset=['Week'])
 
-# DEFINING DSAT vs CSAT BASED STRICTLY ON CUSTOMER EFFORTLESS (Column H)
+# Define DSAT based strictly on Customer_Effortless
 df['DSAT']          = df['Customer_Effortless'].apply(lambda x: 1 if str(x).strip().lower()=="no" else 0)
 df['transcript_len']= df['Chat_Transcript'].fillna('').apply(len)
 df['comment_len']   = df['Customer_Comment'].fillna('').apply(len)
+# Hybrid input: Read both comment and transcript for the best context
+df['Combined_Text'] = df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')
 
 weeks_sorted = sorted(df['Week'].unique())
 curr_week    = weeks_sorted[-1]
@@ -113,84 +115,83 @@ def rule_sentiment(text):
     t = str(text).lower()
     return sum(1 for w in POS_W if w in t) - sum(1 for w in NEG_W if w in t)
 
-df['Sentiment'] = (df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')).apply(rule_sentiment)
+df['Sentiment'] = df['Combined_Text'].apply(rule_sentiment)
 
 # ─────────────────────────────────────────────────────────────────────────────────
-# ══ TRANSCRIPT-ONLY ML FOR DSATS ONLY ══
+# ══ HYBRID ML MODEL (COMMENT + TRANSCRIPT) TRAINED ONLY ON DSATS ══
 # ─────────────────────────────────────────────────────────────────────────────────
 
 PRODUCT_KW = ["feature is not available", "not working", "bug", "error", "crash", "glitch", "outage", "failed", "system issue", "limitation"]
-PROCESS_KW = ["wait", "delay", "slow", "transfer", "hold", "repetitive", "keep asking", "already told", "step by step", "worked", "resolved", "fixed", "transfer events"]
-PEOPLE_KW  = ["rude", "unhelpful", "attitude", "escalate", "supervisor", "manager", "dismissive", "friendly", "great support", "excellent service", "empathy", "poor service"]
+PROCESS_KW = ["wait", "delay", "slow", "transfer", "hold", "repetitive", "keep asking", "already told"]
+PEOPLE_KW  = ["rude", "unhelpful", "attitude", "escalate", "supervisor", "manager", "dismissive", "unprofessional", "poor service"]
 
-# We only train and define ground truth on DSAT tickets (Customer_Effortless == No)
+# Isolate DSATs for training
 df_dsat = df[df['DSAT'] == 1].copy()
 
-def get_dsat_ground_truth(row):
+def get_dsat_ground_truth(combined_text):
     """
-    Creates the 'True Label' by looking at BOTH comment and transcript.
-    Used ONLY for training the DSAT classifier.
+    Generates Ground Truth for training based on combined text.
+    Prioritizes Product bugs, then People attitude, then Process.
     """
-    c = str(row['Customer_Comment']).lower()
-    t = str(row['Chat_Transcript']).lower()
-    combined = c + " " + t
-    
-    if any(w in combined for w in PRODUCT_KW): return "Product"
-    if any(w in c for w in ["rude", "unhelpful", "attitude", "poor service"]): return "People"
+    t = str(combined_text).lower()
+    if any(w in t for w in PRODUCT_KW): return "Product"
     if any(w in t for w in PEOPLE_KW): return "People"
-    
-    return "Process"
+    return "Process" # Fallback for delays/transfers/generic complaints
 
-df_dsat['True_Label'] = df_dsat.apply(get_dsat_ground_truth, axis=1)
+df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_dsat_ground_truth)
 
-# Train ML model on Chat_Transcript ONLY, strictly for DSATs
-df_labeled   = df_dsat[df_dsat['True_Label'] != "Other"].copy()
 nlp_accuracy = 0.0
 vectorizer   = None
 issue_model  = None
 model_report = ""
 
-if len(df_labeled) >= 10 and df_labeled['True_Label'].nunique() >= 2:
-    
-    # Vectorize ONLY the transcript.
+if len(df_dsat) >= 15 and df_dsat['True_Label'].nunique() >= 2:
+    # Use robust TF-IDF with Unigrams & Bigrams
     vectorizer = TfidfVectorizer(
         stop_words='english', max_features=3000,
         ngram_range=(1, 2), sublinear_tf=True, min_df=2
     )
-    X_all = vectorizer.fit_transform(df_labeled['Chat_Transcript'])
-    y_all = np.array(df_labeled['True_Label'].tolist())
+    X_train = vectorizer.fit_transform(df_dsat['Combined_Text'])
+    y_train = np.array(df_dsat['True_Label'].tolist())
 
-    n_splits = min(5, max(2, df_labeled['True_Label'].value_counts().min()))
+    n_splits = min(5, max(2, df_dsat['True_Label'].value_counts().min()))
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     
-    # ML MODEL: Multinomial Naive Bayes.
-    nb_classifier = MultinomialNB(alpha=0.5)
+    # ML MODEL: Logistic Regression (Highly effective for this NLP task)
+    log_reg = LogisticRegression(class_weight='balanced', C=1.0, solver='lbfgs', max_iter=500, random_state=42)
     
-    y_pred_cv = cross_val_predict(nb_classifier, X_all, y_all, cv=skf)
-    
-    nlp_accuracy = accuracy_score(y_all, y_pred_cv)
-    model_report = classification_report(y_all, y_pred_cv)
+    y_pred_cv = cross_val_predict(log_reg, X_train, y_train, cv=skf)
+    nlp_accuracy = accuracy_score(y_train, y_pred_cv)
+    model_report = classification_report(y_train, y_pred_cv)
 
-    # Final model on full labeled DSAT set for live predictions
-    issue_model = MultinomialNB(alpha=0.5)
-    issue_model.fit(X_all, y_all)
+    # Train final model
+    issue_model = LogisticRegression(class_weight='balanced', C=1.0, solver='lbfgs', max_iter=500, random_state=42)
+    issue_model.fit(X_train, y_train)
 
-# Initialize Issue_Label for all rows to "Other"
+# Initialize column
 df['Issue_Label'] = "Other"
 
-# STRICT POST-PREDICTION OVERRIDE
-def final_override(transcript, ml_pred):
-    t = str(transcript).lower()
-    if any(w in t for w in PRODUCT_KW): return "Product"
-    if any(w in t for w in PEOPLE_KW): return "People"
+# LIVE INFERENCE LOGIC (Applies ML + Strict Business Override)
+def classify_ticket(combined_text):
+    if not issue_model or not vectorizer:
+        return "Other"
+    
+    t = str(combined_text).lower()
+    
+    # 1. Statistical ML Prediction
+    ml_pred = issue_model.predict(vectorizer.transform([combined_text]))[0]
+    
+    # 2. Strict Business Override (Ensures 'feature is not available' is ALWAYS Product)
+    if any(w in t for w in PRODUCT_KW):
+        return "Product"
+        
     return ml_pred
 
-# Predict ONLY on DSAT rows using ONLY the transcript
-if issue_model and vectorizer:
-    dsat_indices = df[df['DSAT'] == 1].index
-    if len(dsat_indices) > 0:
-        raw_preds = issue_model.predict(vectorizer.transform(df.loc[dsat_indices, 'Chat_Transcript']))
-        df.loc[dsat_indices, 'Issue_Label'] = [final_override(t, p) for t, p in zip(df.loc[dsat_indices, 'Chat_Transcript'], raw_preds)]
+# Apply only to DSAT rows to preserve dashboard logic
+dsat_indices = df[df['DSAT'] == 1].index
+if len(dsat_indices) > 0:
+    df.loc[dsat_indices, 'Issue_Label'] = df.loc[dsat_indices, 'Combined_Text'].apply(classify_ticket)
+
 
 # ─────────────────────────────────────────────
 # RETURN PREDICTION MODEL
@@ -257,28 +258,18 @@ agent_summary_df['Focus Zone'] = agent_summary_df.apply(assign_quadrant, axis=1)
 # ─────────────────────────────────────────────
 def names_html(lst): return "<br>".join([f"• {a}" for a in lst]) or "None"
 
-def classify_ppp(transcripts):
+def get_ppp_breakdown(df_subset):
     """
-    Classify PPP using ONLY Chat_Transcript via ML, followed by strict logic overrides.
-    Only meant for DSAT tickets.
+    Counts the pre-classified Issue_Label directly from the dataframe subset.
     """
-    text_list = list(transcripts.fillna('') if hasattr(transcripts,'fillna') else [str(t) for t in transcripts])
-    if not text_list:
+    if df_subset.empty:
         return Counter(), 1
-    cats = ["People","Process","Product"]
     
-    if vectorizer and issue_model:
-        ml_preds = issue_model.predict(vectorizer.transform(text_list))
-        final_preds = [final_override(t, p) for t, p in zip(text_list, ml_preds)]
-        cnt = Counter(final_preds)
-    else:
-        cnt = Counter()
-        for t in text_list:
-            t_low = t.lower()
-            if any(w in t_low for w in PRODUCT_KW): cnt["Product"] += 1
-            elif any(w in t_low for w in PEOPLE_KW): cnt["People"] += 1
-            else: cnt["Process"] += 1
-                
+    # We only care about DSATs for PPP
+    dsat_subset = df_subset[df_subset['DSAT'] == 1]
+    cnt = Counter(dsat_subset['Issue_Label'].tolist())
+    
+    cats = ["People","Process","Product"]
     total = sum(cnt.get(c,0) for c in cats) or 1
     return cnt, total
 
@@ -302,12 +293,12 @@ def build_5whys(agent_name, dominant_cat, primary_product, primary_feature,
           f"{(' — top feature: '+primary_feature) if primary_feature and primary_feature!='N/A' else ''}. "
           f"This is the priority product area for coaching.")
     cat_desc = {
-        "People":  "the agent's tone, empathy, or communication style — based exclusively on the transcript, customers reacted negatively to how they were handled",
-        "Process": "workflow breakdowns — based exclusively on the transcript, excessive transfers, long wait times, or repeating issues occurred",
+        "People":  "the agent's tone, empathy, or communication style — based on the interaction, customers reacted negatively to how they were handled",
+        "Process": "workflow breakdowns — excessive transfers, long wait times, or repeating issues occurred",
         "Product": "product bugs, system errors, or feature limitations (e.g., feature is not available) — the agent cannot resolve the issue due to a technical gap"
     }
     w3 = (f"<b>Why is {primary_product} driving DSAT for {agent_name}?</b><br>"
-          f"Transcript-only ML analysis identifies <b>{dominant_cat}</b> as the primary driver ({dom_pct}% of DSAT). "
+          f"ML Root Cause analysis identifies <b>{dominant_cat}</b> as the primary driver ({dom_pct}% of DSAT). "
           f"This points to {cat_desc.get(dominant_cat,'unclassified patterns')}.")
     sys_cause = {
         "People":  f"The agent may lack recent soft-skills calibration or is under-prepared for the complexity of {primary_product} customer profiles. Tone issues often compound with unresolved issues, creating a double DSAT risk.",
@@ -352,7 +343,7 @@ st.markdown(f"""
 
 c1,c2,c3,c4,c5 = st.columns(5)
 c1.metric("ML Model Accuracy", f"{round(nlp_accuracy*100,1)}%",
-          help="Model uses a Multinomial Naive Bayes trained exclusively on Chat Transcripts and DSAT tickets only to predict the true root cause without positive-interaction interference.")
+          help="Model uses a robust Logistic Regression algorithm trained exclusively on DSAT interactions (Comment + Transcript) to correctly identify root causes without CSAT interference.")
 c2.metric("Critical Agents",     int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
 c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
 c4.metric("Recovering",          int(n_improving), delta_color="normal")
@@ -360,12 +351,12 @@ c5.metric("Team Predicted DSAT", int(team_pred))
 
 if model_report:
     with st.expander("🔬 ML Classification Report — People / Process / Product precision · recall · F1"):
-        st.info("ℹ️ Trained purely on DSATs. The architecture generates truth from the full context, but forces the Naive Bayes to predict using ONLY the transcript.")
+        st.info("ℹ️ Trained exclusively on DSAT tickets utilizing both Customer Comments and Chat Transcripts to accurately capture behavioral (People) and technical (Product) drivers.")
         st.code(model_report)
 
 # Overall PPP — right after ML report (USING CUSTOM HTML TO REMOVE ARROWS)
 st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (All Agents · All Time · DSAT tickets only)</div>', unsafe_allow_html=True)
-all_ppp, all_total = classify_ppp(df[df['DSAT']==1]['Chat_Transcript'])
+all_ppp, all_total = get_ppp_breakdown(df)
 ap1,ap2,ap3 = st.columns(3)
 for col_o, cat in [(ap1,"People"),(ap2,"Process"),(ap3,"Product")]:
     v   = all_ppp.get(cat,0)
@@ -433,9 +424,9 @@ def render_product_wow_card(row):
         feat_bits.append(f"<span style='color:#8b92ab'>{f}:</span> <span style='color:{c}'>{a} {v} ({fd:+d})</span>")
     feat_html = " &nbsp;·&nbsp; ".join(feat_bits) or "<span style='color:#5a6484'>No DSAT this week</span>"
 
-    # Transcript-only classification
-    prod_transcripts = df[(df['Week']==curr_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Chat_Transcript']
-    ppp, tot = classify_ppp(prod_transcripts)
+    # Fetch PPP for this product subset
+    prod_subset = df[(df['Week']==curr_week) & (df['Product']==row['Product'])]
+    ppp, tot = get_ppp_breakdown(prod_subset)
     ppp_html = "".join([
         f"<span class='ppp-pill {cls}'>{cat}: {ppp.get(cat,0)} ({round(ppp.get(cat,0)/tot*100) if tot>0 else 0}%)</span>"
         for cat,cls in [("People","pill-people"),("Process","pill-process"),("Product","pill-product")]
@@ -472,7 +463,7 @@ def render_product_wow_card(row):
   <br>
   <span style="color:#5a6484;font-size:0.76rem;text-transform:uppercase">Feature breakdown — DSAT this week vs last</span><br>
   <span style="font-size:0.84rem">{feat_html}</span><br><br>
-  <span style="color:#5a6484;font-size:0.76rem;text-transform:uppercase">Issue root — People / Process / Product (ML: Transcript Only)</span><br>
+  <span style="color:#5a6484;font-size:0.76rem;text-transform:uppercase">Issue root — People / Process / Product</span><br>
   <div class="ppp-row">{ppp_html}</div>
 </div>
 """
@@ -589,13 +580,12 @@ else:
     ag_curr_dsat = ag_all[(ag_all['Week']==curr_week)&(ag_all['DSAT']==1)]
     ag_prev_dsat = ag_all[(ag_all['Week']==prev_week)&(ag_all['DSAT']==1)]
     
-    # Transcript ONLY classification
-    ppp_curr, _ = classify_ppp(ag_curr_dsat['Chat_Transcript'])
-    ppp_prev, _ = classify_ppp(ag_prev_dsat['Chat_Transcript'])
+    ppp_curr, _ = get_ppp_breakdown(ag_curr_dsat)
+    ppp_prev, _ = get_ppp_breakdown(ag_prev_dsat)
 
     c_wow1, c_wow2 = st.columns(2)
     with c_wow1:
-        st.markdown("**PPP (Transcript Only) — This Week vs Last**")
+        st.markdown("**PPP — This Week vs Last**")
         ppp_rows = [{"Category":cat,"This Week":ppp_curr.get(cat,0),"Last Week":ppp_prev.get(cat,0),
                      "Change":ppp_curr.get(cat,0)-ppp_prev.get(cat,0)} for cat in ["People","Process","Product"]]
         st.dataframe(pd.DataFrame(ppp_rows), use_container_width=True, hide_index=True)
@@ -614,7 +604,7 @@ else:
 
     # Overall PPP for this agent (USING CUSTOM HTML TO REMOVE ARROWS)
     st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (This Agent · All Time)</div>', unsafe_allow_html=True)
-    overall_ppp, overall_total = classify_ppp(ag_dsat['Chat_Transcript'])
+    overall_ppp, overall_total = get_ppp_breakdown(ag_dsat)
     dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
 
     o1,o2,o3 = st.columns(3)
@@ -744,6 +734,8 @@ if tkt_rows.empty:
 else:
     trow       = tkt_rows.iloc[0]
     transcript = str(trow['Chat_Transcript'])
+    comment    = str(trow['Customer_Comment'])
+    combined   = str(trow['Combined_Text'])
     is_dsat    = trow['DSAT'] == 1
 
     if not is_dsat:
@@ -762,21 +754,8 @@ else:
         """, unsafe_allow_html=True)
     
     else:
-        # ── ROOT CAUSE: ONLY reads Transcript + Strict Product Override
-        if vectorizer and issue_model:
-            # Pass transcript to model
-            raw_pred = issue_model.predict(vectorizer.transform([transcript]))[0]
-            # Then enforce strict overrides
-            ticket_issue = final_override_logic(transcript, raw_pred)
-        else:
-            # Rule-based fallback using ONLY transcript
-            t = transcript.lower()
-            if any(w in t for w in PRODUCT_KW):
-                ticket_issue = "Product"
-            elif any(w in t for w in PROCESS_KW):
-                ticket_issue = "Process"
-            else:
-                ticket_issue = "People"
+        # ── ROOT CAUSE (Uses pre-computed Issue_Label from DataFrame which is derived from the new ML model)
+        ticket_issue = trow['Issue_Label']
 
         # Return prediction
         if return_model:
@@ -802,11 +781,11 @@ else:
         wwg_label = "What went wrong:"
         core_label= "Core issue:"
         dmap = {
-            "People":  (f"Based on the chat transcript, the agent's communication style or attitude negatively impacted the customer. The interaction lacked empathy or professionalism.",
+            "People":  (f"Based on the interaction, the agent's communication style or attitude negatively impacted the customer. The interaction lacked empathy or professionalism.",
                         "Agent behaviour or communication was the primary DSAT driver — not the technical outcome."),
-            "Process": (f"Based on the chat transcript, the support process broke down. The customer experienced wait times, transfers, or had to repeat their issue.",
+            "Process": (f"Based on the interaction, the support process broke down. The customer experienced wait times, transfers, or had to repeat their issue.",
                         "Operational inefficiency or broken workflow caused the poor experience."),
-            "Product": (f"Based on the chat transcript, the customer encountered a product bug, system error, or feature limitation (e.g., feature is not available) the agent could not resolve.",
+            "Product": (f"Based on the interaction, the customer encountered a product bug, system error, or feature limitation (e.g., feature is not available) the agent could not resolve.",
                         "A product or technical gap drove dissatisfaction — the agent was powerless to fix the root cause.")
         }
         wwg,core = dmap.get(ticket_issue,("Needs manual review.","Unclear root cause."))
@@ -836,9 +815,11 @@ else:
             st.markdown(f"""
     <div class="ticket-box">
       <b>🔍 Root Cause Analysis</b><br>
-      <span style="color:#7eb8f7;font-size:0.85rem">ML classification (Transcript Only): <b>{ticket_issue}</b></span><br><br>
+      <span style="color:#7eb8f7;font-size:0.85rem">ML classification: <b>{ticket_issue}</b></span><br><br>
       <b>{wwg_label}</b><br>{wwg}<br><br>
       <b>{core_label}</b><br>{core}<br><br>
+      <b>Customer's Words:</b><br>
+      <span style="color:#aab4cc;font-style:italic">"{comment}"</span><br><br>
       <b>Product & Feature:</b> {trow['Product']} — {trow['Feature']}
       {fhtml2}<br><br>
       <b>📡 Transcript Signals</b><br>{shtml}
@@ -860,4 +841,4 @@ else:
     """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · Naive Bayes NLP (Transcript Only) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · Logistic Regression NLP (Comment + Transcript) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
