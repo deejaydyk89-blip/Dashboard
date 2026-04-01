@@ -68,7 +68,7 @@ h2, h3 { color: #c9d1e8; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("OneStop Solutions")
+st.markdown(" 🧠 OneStop Solutions")
 st.markdown("<p style='color:#8b92ab;margin-top:-14px;font-size:0.9rem;'>ML-powered · 5-Why root cause · Product & feature WoW · Agent risk & coaching</p>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
