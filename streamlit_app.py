@@ -93,6 +93,8 @@ if df is None or df.empty:
 df.columns          = df.columns.str.strip()
 df['Week']          = pd.to_datetime(df['Week'], errors='coerce')
 df                  = df.dropna(subset=['Week'])
+
+# DEFINING DSAT vs CSAT BASED STRICTLY ON CUSTOMER EFFORTLESS (Column H)
 df['DSAT']          = df['Customer_Effortless'].apply(lambda x: 1 if str(x).strip().lower()=="no" else 0)
 df['transcript_len']= df['Chat_Transcript'].fillna('').apply(len)
 df['comment_len']   = df['Customer_Comment'].fillna('').apply(len)
@@ -114,42 +116,43 @@ def rule_sentiment(text):
 df['Sentiment'] = (df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')).apply(rule_sentiment)
 
 # ─────────────────────────────────────────────────────────────────────────────────
-# ══ TRANSCRIPT-ONLY ML WITH NEW RANDOM FOREST ARCHITECTURE ══
+# ══ TRANSCRIPT-ONLY ML FOR DSATS ONLY ══
 # ─────────────────────────────────────────────────────────────────────────────────
 
 PRODUCT_KW = ["feature is not available", "not working", "bug", "error", "crash", "glitch", "outage", "failed", "system issue", "limitation"]
 PROCESS_KW = ["wait", "delay", "slow", "transfer", "hold", "repetitive", "keep asking", "already told", "step by step", "worked", "resolved", "fixed", "transfer events"]
 PEOPLE_KW  = ["rude", "unhelpful", "attitude", "escalate", "supervisor", "manager", "dismissive", "friendly", "great support", "excellent service", "empathy", "poor service"]
 
-def get_ground_truth(row):
+# We only train and define ground truth on DSAT tickets (Customer_Effortless == No)
+df_dsat = df[df['DSAT'] == 1].copy()
+
+def get_dsat_ground_truth(row):
     """
     Creates the 'True Label' by looking at BOTH comment and transcript.
-    This ensures 'People' is correctly identified and preserved in the training labels.
+    Used ONLY for training the DSAT classifier.
     """
     c = str(row['Customer_Comment']).lower()
     t = str(row['Chat_Transcript']).lower()
     combined = c + " " + t
     
     if any(w in combined for w in PRODUCT_KW): return "Product"
-    if any(w in c for w in ["rude", "unhelpful", "attitude", "poor service", "great support", "friendly"]): return "People"
+    if any(w in c for w in ["rude", "unhelpful", "attitude", "poor service"]): return "People"
     if any(w in t for w in PEOPLE_KW): return "People"
     
     return "Process"
 
-df['True_Label'] = df.apply(get_ground_truth, axis=1)
+df_dsat['True_Label'] = df_dsat.apply(get_dsat_ground_truth, axis=1)
 
-# Train ML model on Chat_Transcript ONLY, and ONLY ON DSAT TICKETS
-df_labeled   = df[(df['True_Label'] != "Other") & (df['DSAT'] == 1)].copy()
+# Train ML model on Chat_Transcript ONLY, strictly for DSATs
+df_labeled   = df_dsat[df_dsat['True_Label'] != "Other"].copy()
 nlp_accuracy = 0.0
 vectorizer   = None
 issue_model  = None
 model_report = ""
-label_dist   = {}
 
-if len(df_labeled) >= 15 and df_labeled['True_Label'].nunique() >= 2:
-    label_dist = df_labeled['True_Label'].value_counts().to_dict()
-
-    # Vectorize ONLY the transcript. 
+if len(df_labeled) >= 10 and df_labeled['True_Label'].nunique() >= 2:
+    
+    # Vectorize ONLY the transcript.
     vectorizer = TfidfVectorizer(
         stop_words='english', max_features=3000,
         ngram_range=(1, 2), sublinear_tf=True, min_df=2
@@ -157,13 +160,10 @@ if len(df_labeled) >= 15 and df_labeled['True_Label'].nunique() >= 2:
     X_all = vectorizer.fit_transform(df_labeled['Chat_Transcript'])
     y_all = np.array(df_labeled['True_Label'].tolist())
 
-    # Safe StratifiedKFold logic based on the minimum class count to avoid errors
-    min_class_count = df_labeled['True_Label'].value_counts().min()
-    n_splits = min(5, max(2, min_class_count))
-
+    n_splits = min(5, max(2, df_labeled['True_Label'].value_counts().min()))
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     
-    # NEW ML MODEL: Multinomial Naive Bayes.
+    # ML MODEL: Multinomial Naive Bayes.
     nb_classifier = MultinomialNB(alpha=0.5)
     
     y_pred_cv = cross_val_predict(nb_classifier, X_all, y_all, cv=skf)
@@ -175,17 +175,22 @@ if len(df_labeled) >= 15 and df_labeled['True_Label'].nunique() >= 2:
     issue_model = MultinomialNB(alpha=0.5)
     issue_model.fit(X_all, y_all)
 
-    # Predict ALL rows using ONLY the transcript
-    raw_preds = issue_model.predict(vectorizer.transform(df['Chat_Transcript']))
-    
-    # STRICT POST-PREDICTION OVERRIDE (Forces Product for technical keywords regardless of ML)
-    def final_override(transcript, ml_pred):
-        t = str(transcript).lower()
-        if any(w in t for w in PRODUCT_KW):
-            return "Product"
-        return ml_pred
-        
-    df['Issue_Label'] = [final_override(t, p) for t, p in zip(df['Chat_Transcript'], raw_preds)]
+# Initialize Issue_Label for all rows to "Other"
+df['Issue_Label'] = "Other"
+
+# STRICT POST-PREDICTION OVERRIDE
+def final_override(transcript, ml_pred):
+    t = str(transcript).lower()
+    if any(w in t for w in PRODUCT_KW): return "Product"
+    if any(w in t for w in PEOPLE_KW): return "People"
+    return ml_pred
+
+# Predict ONLY on DSAT rows using ONLY the transcript
+if issue_model and vectorizer:
+    dsat_indices = df[df['DSAT'] == 1].index
+    if len(dsat_indices) > 0:
+        raw_preds = issue_model.predict(vectorizer.transform(df.loc[dsat_indices, 'Chat_Transcript']))
+        df.loc[dsat_indices, 'Issue_Label'] = [final_override(t, p) for t, p in zip(df.loc[dsat_indices, 'Chat_Transcript'], raw_preds)]
 
 # ─────────────────────────────────────────────
 # RETURN PREDICTION MODEL
@@ -252,21 +257,10 @@ agent_summary_df['Focus Zone'] = agent_summary_df.apply(assign_quadrant, axis=1)
 # ─────────────────────────────────────────────
 def names_html(lst): return "<br>".join([f"• {a}" for a in lst]) or "None"
 
-def final_override_logic(transcript, ml_pred):
-    """
-    Absolute guarantee that any transcript mentioning 'feature is not available' 
-    or core bugs is classified as Product, and explicit people mentions as People.
-    """
-    t = str(transcript).lower()
-    if any(w in t for w in PRODUCT_KW):
-        return "Product"
-    if any(w in t for w in PEOPLE_KW):
-        return "People"
-    return ml_pred
-
 def classify_ppp(transcripts):
     """
     Classify PPP using ONLY Chat_Transcript via ML, followed by strict logic overrides.
+    Only meant for DSAT tickets.
     """
     text_list = list(transcripts.fillna('') if hasattr(transcripts,'fillna') else [str(t) for t in transcripts])
     if not text_list:
@@ -275,7 +269,7 @@ def classify_ppp(transcripts):
     
     if vectorizer and issue_model:
         ml_preds = issue_model.predict(vectorizer.transform(text_list))
-        final_preds = [final_override_logic(t, p) for t, p in zip(text_list, ml_preds)]
+        final_preds = [final_override(t, p) for t, p in zip(text_list, ml_preds)]
         cnt = Counter(final_preds)
     else:
         cnt = Counter()
@@ -344,7 +338,6 @@ n_worsening = (agent_summary_df['Risk Δ'] > 3).sum()
 n_improving = (agent_summary_df['Risk Δ'] < -3).sum()
 top_names   = ", ".join(agent_summary_df[agent_summary_df['Focus Zone']=="🔴 Intervene Now"]['Agent'].tolist()[:3]) or "None"
 team_pred   = int(agent_summary_df['Predicted DSAT'].sum())
-ldist_str   = " · ".join([f"{k}: {v}" for k,v in label_dist.items()]) if label_dist else "N/A"
 
 st.markdown(f"""
 <div class="morning-brief">
@@ -353,7 +346,6 @@ st.markdown(f"""
     <b>{n_critical} agent(s) need immediate intervention</b> · {n_watch} on watchlist ·
     {n_worsening} worsening · {n_improving} recovering<br>
     📌 Immediate focus: <b>{top_names}</b> &nbsp;|&nbsp; 📊 Team predicted DSAT: <b>{team_pred}</b><br>
-    <span style="color:#5a6484;font-size:0.8rem">ML training labels (DSAT Only): {ldist_str}</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -754,46 +746,59 @@ else:
     transcript = str(trow['Chat_Transcript'])
     is_dsat    = trow['DSAT'] == 1
 
-    # ── ROOT CAUSE: ONLY reads Transcript + Strict Product Override
-    if vectorizer and issue_model:
-        # Pass transcript to model
-        raw_pred = issue_model.predict(vectorizer.transform([transcript]))[0]
-        # Then enforce strict overrides
-        ticket_issue = final_override_logic(transcript, raw_pred)
+    if not is_dsat:
+        # CSAT Display - Explicitly asked to mention it's a CSAT and nothing else
+        st.markdown(f"""
+        <div class="story-card" style="margin-bottom:10px; border: 1px solid #1e6e2a; background: #102414;">
+          <b>🎫 {ticket_id}</b> &nbsp;
+          <span style="color:#34d399;font-weight:bold;">🟢 CSAT Ticket</span>
+          <br><br>
+          <span style="color:#8b92ab;font-size:0.82rem">{trow['Product']} · {trow['Feature']}</span> &nbsp;
+          <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Agent: {trow['Agent_Name']}</span> &nbsp;
+          <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Week: {str(trow['Week'])[:10]}</span> &nbsp;
+          <br><br>
+          <span style="color:#c9d1e8;">This was a positive interaction (Customer Effortless = Yes). No root cause analysis or return prediction is required.</span>
+        </div>
+        """, unsafe_allow_html=True)
+    
     else:
-        # Rule-based fallback using ONLY transcript
-        t = transcript.lower()
-        if any(w in t for w in PRODUCT_KW):
-            ticket_issue = "Product"
-        elif any(w in t for w in PROCESS_KW):
-            ticket_issue = "Process"
+        # ── ROOT CAUSE: ONLY reads Transcript + Strict Product Override
+        if vectorizer and issue_model:
+            # Pass transcript to model
+            raw_pred = issue_model.predict(vectorizer.transform([transcript]))[0]
+            # Then enforce strict overrides
+            ticket_issue = final_override_logic(transcript, raw_pred)
         else:
-            ticket_issue = "People"
+            # Rule-based fallback using ONLY transcript
+            t = transcript.lower()
+            if any(w in t for w in PRODUCT_KW):
+                ticket_issue = "Product"
+            elif any(w in t for w in PROCESS_KW):
+                ticket_issue = "Process"
+            else:
+                ticket_issue = "People"
 
-    # Return prediction
-    if return_model:
-        feat_row  = [[trow['Sentiment'], trow['issue_encoded'], trow['transcript_len'],
-                      trow['comment_len'], trow['has_escalation'], trow['has_frustration'], trow['has_unresolved']]]
-        dsat_prob = return_model.predict_proba(feat_row)[0][1]
-        ret_label = "🔴 Likely DSAT on Return" if dsat_prob>=0.5 else "🟢 Likely CSAT on Return"
-        ret_conf  = f"{round(max(dsat_prob,1-dsat_prob)*100,1)}% confidence"
-        pred_cls  = "pred-dsat" if dsat_prob>=0.5 else "pred-csat"
-    else:
-        ret_label,ret_conf,pred_cls = "⚪ Unavailable","","pred-csat"
+        # Return prediction
+        if return_model:
+            feat_row  = [[trow['Sentiment'], trow['issue_encoded'], trow['transcript_len'],
+                          trow['comment_len'], trow['has_escalation'], trow['has_frustration'], trow['has_unresolved']]]
+            dsat_prob = return_model.predict_proba(feat_row)[0][1]
+            ret_label = "🔴 Likely DSAT on Return" if dsat_prob>=0.5 else "🟢 Likely CSAT on Return"
+            ret_conf  = f"{round(max(dsat_prob,1-dsat_prob)*100,1)}% confidence"
+            pred_cls  = "pred-dsat" if dsat_prob>=0.5 else "pred-csat"
+        else:
+            ret_label,ret_conf,pred_cls = "⚪ Unavailable","","pred-csat"
 
-    tl = transcript.lower()
-    signals = []
-    if any(w in tl for w in ["escalate","supervisor","manager","unacceptable"]): signals.append("⚠️ Customer requested escalation or supervisor")
-    if any(w in tl for w in ["already told","again","multiple times","keep asking","frustrated","why","repetitive"]): signals.append("😤 High frustration — customer had to repeat their issue")
-    if any(w in tl for w in ["no solution","cannot","unable to resolve","no fix","product limitation","not at the moment", "feature is not available"]): signals.append("❌ Issue left unresolved — no fix was offered")
-    if any(w in tl for w in ["wait","long","delay","slow","hold"]): signals.append("⏱️ Wait time or delay complaint detected in transcript")
-    if any(w in tl for w in ["already explained","told you","asked before"]): signals.append("🔁 Repeat effort — handoff or case note failure")
-    if any(w in tl for w in ["it worked","resolved","fixed","glad","thank","step by step","solution worked"]): signals.append("✅ Positive resolution signals detected in transcript")
-    if not signals: signals.append("✅ No distress signals — transcript appears neutral or positive")
-    shtml = "".join([f"<div style='padding:5px 0;color:#c9d1e8;border-bottom:1px solid #1a2235'>{s}</div>" for s in signals])
+        tl = transcript.lower()
+        signals = []
+        if any(w in tl for w in ["escalate","supervisor","manager","unacceptable"]): signals.append("⚠️ Customer requested escalation or supervisor")
+        if any(w in tl for w in ["already told","again","multiple times","keep asking","frustrated","why","repetitive"]): signals.append("😤 High frustration — customer had to repeat their issue")
+        if any(w in tl for w in ["no solution","cannot","unable to resolve","no fix","product limitation","not at the moment", "feature is not available"]): signals.append("❌ Issue left unresolved — no fix was offered")
+        if any(w in tl for w in ["wait","long","delay","slow","hold"]): signals.append("⏱️ Wait time or delay complaint detected in transcript")
+        if any(w in tl for w in ["already explained","told you","asked before"]): signals.append("🔁 Repeat effort — handoff or case note failure")
+        if not signals: signals.append("✅ No distress signals — transcript appears neutral")
+        shtml = "".join([f"<div style='padding:5px 0;color:#c9d1e8;border-bottom:1px solid #1a2235'>{s}</div>" for s in signals])
 
-    # Root cause narrative — explicitly references transcript ONLY
-    if is_dsat:
         wwg_label = "What went wrong:"
         core_label= "Core issue:"
         dmap = {
@@ -804,66 +809,55 @@ else:
             "Product": (f"Based on the chat transcript, the customer encountered a product bug, system error, or feature limitation (e.g., feature is not available) the agent could not resolve.",
                         "A product or technical gap drove dissatisfaction — the agent was powerless to fix the root cause.")
         }
-    else:
-        wwg_label = "What went well:"
-        core_label= "Key success factor:"
-        dmap = {
-            "People":  ("The agent communicated professionally and with empathy throughout the interaction. The customer felt heard and respected.",
-                        "Strong agent communication and attitude delivered a positive experience."),
-            "Process": ("The support process ran smoothly — the issue was resolved efficiently without unnecessary transfers or delays.",
-                        "Clean, efficient workflow and clear case ownership resulted in successful resolution."),
-            "Product": ("The product functioned correctly or the agent's technical knowledge resolved the issue confidently and quickly.",
-                        "Product reliability combined with the agent's technical expertise delivered a satisfying outcome.")
-        }
-    wwg,core = dmap.get(ticket_issue,("Needs manual review.","Unclear root cause."))
+        wwg,core = dmap.get(ticket_issue,("Needs manual review.","Unclear root cause."))
 
-    eflags = []
-    if any(w in tl for w in ["escalate","supervisor"]): eflags.append("<b>Escalation flag:</b> Customer demanded supervisor involvement — high-severity interaction.")
-    if any(w in tl for w in ["no solution","cannot","unable","not at the moment", "feature is not available"]): eflags.append("<b>Unresolved:</b> Issue NOT resolved — high re-contact and churn risk.")
-    if any(w in tl for w in ["already told","multiple times","keep asking"]): eflags.append("<b>Repeat effort:</b> Customer re-explained their problem — handoff failure.")
-    fhtml2 = "".join([f"<br><br>{f}" for f in eflags])
+        eflags = []
+        if any(w in tl for w in ["escalate","supervisor"]): eflags.append("<b>Escalation flag:</b> Customer demanded supervisor involvement — high-severity interaction.")
+        if any(w in tl for w in ["no solution","cannot","unable","not at the moment", "feature is not available"]): eflags.append("<b>Unresolved:</b> Issue NOT resolved — high re-contact and churn risk.")
+        if any(w in tl for w in ["already told","multiple times","keep asking"]): eflags.append("<b>Repeat effort:</b> Customer re-explained their problem — handoff failure.")
+        fhtml2 = "".join([f"<br><br>{f}" for f in eflags])
 
-    actual = "🔴 DSAT — Customer was dissatisfied" if is_dsat else "🟢 CSAT — Customer was satisfied"
-    sv     = trow['Sentiment']
-    slbl   = "😟 Negative" if sv<0 else ("😊 Positive" if sv>1 else "😐 Neutral")
+        actual = "🔴 DSAT — Customer was dissatisfied"
+        sv     = trow['Sentiment']
+        slbl   = "😟 Negative" if sv<0 else ("😊 Positive" if sv>1 else "😐 Neutral")
 
-    st.markdown(f"""
-<div class="story-card" style="margin-bottom:10px">
-  <b>🎫 {ticket_id}</b> &nbsp;
-  <span style="color:#8b92ab;font-size:0.82rem">{trow['Product']} · {trow['Feature']}</span> &nbsp;
-  <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Agent: {trow['Agent_Name']}</span> &nbsp;
-  <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Week: {str(trow['Week'])[:10]}</span> &nbsp;
-  <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Team: {trow['Team']}</span>
-</div>
-""", unsafe_allow_html=True)
-
-    left,right = st.columns([1.3,1])
-    with left:
         st.markdown(f"""
-<div class="ticket-box">
-  <b>🔍 Root Cause Analysis</b><br>
-  <span style="color:#7eb8f7;font-size:0.85rem">ML classification (Transcript Only): <b>{ticket_issue}</b></span><br><br>
-  <b>{wwg_label}</b><br>{wwg}<br><br>
-  <b>{core_label}</b><br>{core}<br><br>
-  <b>Product & Feature:</b> {trow['Product']} — {trow['Feature']}
-  {fhtml2}<br><br>
-  <b>📡 Transcript Signals</b><br>{shtml}
-</div>
-""", unsafe_allow_html=True)
+    <div class="story-card" style="margin-bottom:10px">
+      <b>🎫 {ticket_id}</b> &nbsp;
+      <span style="color:#8b92ab;font-size:0.82rem">{trow['Product']} · {trow['Feature']}</span> &nbsp;
+      <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Agent: {trow['Agent_Name']}</span> &nbsp;
+      <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Week: {str(trow['Week'])[:10]}</span> &nbsp;
+      <span style="background:#1e2a40;padding:2px 10px;border-radius:12px;font-size:0.78rem;color:#c9d1e8">Team: {trow['Team']}</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with right:
-        st.markdown(f"""
-<div class="ticket-box">
-  <b>🔮 Return Prediction</b><br>
-  <span style="color:#8b92ab;font-size:0.82rem">If this customer contacts again:</span><br><br>
-  <span class="{pred_cls}">{ret_label}</span><br>
-  <span style="color:#8b92ab;font-size:0.82rem">{ret_conf}</span><br><br>
-  <b>Actual outcome (this ticket):</b><br>{actual}<br><br>
-  <b>Sentiment score:</b> {round(float(sv),2)} — {slbl}<br><br>
-  <b>💬 Full Chat Transcript</b>
-  <div style="background:#0d1220;border-radius:8px;padding:12px;margin-top:8px;font-size:0.79rem;color:#a0aabf;max-height:340px;overflow-y:auto;line-height:1.75;white-space:pre-wrap">{transcript}</div>
-</div>
-""", unsafe_allow_html=True)
+        left,right = st.columns([1.3,1])
+        with left:
+            st.markdown(f"""
+    <div class="ticket-box">
+      <b>🔍 Root Cause Analysis</b><br>
+      <span style="color:#7eb8f7;font-size:0.85rem">ML classification (Transcript Only): <b>{ticket_issue}</b></span><br><br>
+      <b>{wwg_label}</b><br>{wwg}<br><br>
+      <b>{core_label}</b><br>{core}<br><br>
+      <b>Product & Feature:</b> {trow['Product']} — {trow['Feature']}
+      {fhtml2}<br><br>
+      <b>📡 Transcript Signals</b><br>{shtml}
+    </div>
+    """, unsafe_allow_html=True)
+
+        with right:
+            st.markdown(f"""
+    <div class="ticket-box">
+      <b>🔮 Return Prediction</b><br>
+      <span style="color:#8b92ab;font-size:0.82rem">If this customer contacts again:</span><br><br>
+      <span class="{pred_cls}">{ret_label}</span><br>
+      <span style="color:#8b92ab;font-size:0.82rem">{ret_conf}</span><br><br>
+      <b>Actual outcome (this ticket):</b><br>{actual}<br><br>
+      <b>Sentiment score:</b> {round(float(sv),2)} — {slbl}<br><br>
+      <b>💬 Full Chat Transcript</b>
+      <div style="background:#0d1220;border-radius:8px;padding:12px;margin-top:8px;font-size:0.79rem;color:#a0aabf;max-height:340px;overflow-y:auto;line-height:1.75;white-space:pre-wrap">{transcript}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
 st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · Naive Bayes NLP (Transcript Only) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
