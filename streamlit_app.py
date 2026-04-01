@@ -28,16 +28,13 @@ html, body, [class*="css"] {
     color: #dde3f0;
 }
 
-/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #0d1220; }
 ::-webkit-scrollbar-thumb { background: #2a3555; border-radius: 4px; }
 
-/* ── Typography ── */
 h1 { color: #ffffff; font-size: 1.9rem; font-weight: 700; letter-spacing: -0.5px; }
 h2, h3 { color: #c9d1e8; }
 
-/* ── Metric cards ── */
 [data-testid="metric-container"] {
     background: linear-gradient(135deg, #111827, #0d1525);
     border: 1px solid #1e2d4a;
@@ -60,7 +57,6 @@ h2, h3 { color: #c9d1e8; }
 [data-testid="stMetricLabel"] { color: #6b7a99; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 500; }
 [data-testid="stMetricDelta"] { font-size: 0.8rem; }
 
-/* ── Section headers ── */
 .section-header {
     display: flex;
     align-items: center;
@@ -88,7 +84,6 @@ h2, h3 { color: #c9d1e8; }
     letter-spacing: 0.06em;
 }
 
-/* ── Glance brief ── */
 .morning-brief {
     background: linear-gradient(135deg, rgba(59,91,219,0.08), rgba(112,72,232,0.05));
     border: 1px solid rgba(59,91,219,0.25);
@@ -109,7 +104,6 @@ h2, h3 { color: #c9d1e8; }
 .brief-title { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.14em; color: #3b5bdb; margin-bottom: 10px; font-weight: 600; }
 .brief-body  { font-size: 1rem; color: #c9d5f0; line-height: 1.85; }
 
-/* ── Cards ── */
 .story-card {
     background: linear-gradient(135deg, #111827, #0d1525);
     border: 1px solid #1e2d4a;
@@ -140,7 +134,6 @@ h2, h3 { color: #c9d1e8; }
     line-height: 1.9;
 }
 
-/* ── Stat boxes (custom metrics) ── */
 .stat-box {
     background: linear-gradient(135deg, #111827, #0d1525);
     border: 1px solid #1e2d4a;
@@ -152,21 +145,18 @@ h2, h3 { color: #c9d1e8; }
 .stat-value { font-size: 1.7rem; font-weight: 700; color: #6ea8fe; font-family: 'DM Mono', monospace; }
 .stat-sub   { font-size: 0.8rem; color: #6b7a99; margin-top: 4px; }
 
-/* ── PPP pills ── */
 .ppp-row  { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
 .ppp-pill { padding: 5px 16px; border-radius: 20px; font-size: 0.82rem; font-weight: 600; }
 .pill-people  { background: rgba(251,146,60,0.12); border: 1px solid rgba(251,146,60,0.35); color: #fb923c; }
 .pill-process { background: rgba(250,204,21,0.10); border: 1px solid rgba(250,204,21,0.3);  color: #facc15; }
 .pill-product { background: rgba(52,211,153,0.10); border: 1px solid rgba(52,211,153,0.3);  color: #34d399; }
 
-/* ── Focus matrix ── */
 .matrix-cell { border-radius: 12px; padding: 16px 18px; font-size: 0.85rem; line-height: 1.6; margin-bottom: 10px; }
 .cell-red    { background: rgba(239,68,68,0.08);   border: 1px solid rgba(239,68,68,0.25); }
 .cell-orange { background: rgba(251,146,60,0.08);  border: 1px solid rgba(251,146,60,0.25); }
 .cell-yellow { background: rgba(250,204,21,0.07);  border: 1px solid rgba(250,204,21,0.22); }
 .cell-green  { background: rgba(52,211,153,0.07);  border: 1px solid rgba(52,211,153,0.22); }
 
-/* ── 5-Why ── */
 .fivey-card {
     background: linear-gradient(135deg, #0a1525, #080f1e);
     border: 1px solid #1a3055;
@@ -190,22 +180,18 @@ h2, h3 { color: #c9d1e8; }
 .fivey-label.final { color: #34d399; }
 .fivey-text  { color: #c9d1e8; font-size: 0.92rem; }
 
-/* ── Coaching ── */
 .coaching-card { background: rgba(59,91,219,0.06); border: 1px solid rgba(59,91,219,0.2); border-radius: 10px; padding: 16px 20px; margin-top: 14px; }
 .coaching-item { padding: 8px 0; border-bottom: 1px solid rgba(59,91,219,0.1); color: #c9d1e8; font-size: 0.9rem; }
 .coaching-item:last-child { border-bottom: none; }
 
-/* ── Insight tag ── */
 .insight-tag { display: inline-block; padding: 3px 14px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; margin-bottom: 10px; letter-spacing: 0.04em; }
 .tag-critical  { background: rgba(239,68,68,0.15);   border: 1px solid rgba(239,68,68,0.4);   color: #f87272; }
 .tag-watchlist { background: rgba(251,191,36,0.12);  border: 1px solid rgba(251,191,36,0.35); color: #fbbf24; }
 .tag-strong    { background: rgba(52,211,153,0.12);  border: 1px solid rgba(52,211,153,0.35); color: #34d399; }
 
-/* ── Return prediction ── */
 .pred-dsat { background: rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87272; padding:6px 18px; border-radius:20px; font-weight:700; font-size:0.95rem; display:inline-block; }
 .pred-csat { background: rgba(52,211,153,0.12); border:1px solid rgba(52,211,153,0.35); color:#34d399; padding:6px 18px; border-radius:20px; font-weight:700; font-size:0.95rem; display:inline-block; }
 
-/* ── Trend colours ── */
 .trend-up   { color:#f87272; font-weight:700; }
 .trend-down { color:#34d399; font-weight:700; }
 .trend-flat { color:#6b7a99; font-weight:600; }
@@ -213,7 +199,6 @@ h2, h3 { color: #c9d1e8; }
 .wow-worse  { color:#f87272; font-weight:600; }
 .wow-same   { color:#6b7a99; }
 
-/* ── Streamlit overrides ── */
 .stSelectbox label, .stTextInput label { color: #6b7a99; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
 .stSelectbox > div > div { background: #111827; border-color: #1e2d4a; border-radius: 10px; }
 .stTextInput > div > div > input { background: #111827; border-color: #1e2d4a; border-radius: 10px; color: #dde3f0; }
@@ -225,7 +210,6 @@ div[data-testid="stExpander"] { background: #0d1220; border: 1px solid #1a2540; 
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header
 col_logo, col_title = st.columns([0.08, 0.92])
 with col_logo:
     st.markdown("<div style='font-size:2.2rem;margin-top:4px'>🧠</div>", unsafe_allow_html=True)
@@ -267,8 +251,11 @@ prev_week    = weeks_sorted[-2] if len(weeks_sorted) >= 2 else curr_week
 # ─────────────────────────────────────────────
 # SENTIMENT
 # ─────────────────────────────────────────────
-POS_W = ["great","excellent","good","happy","satisfied","thank","thanks","resolved","fixed","perfect","awesome","quick","easy","helpful","appreciate","worked","glad"]
-NEG_W = ["bad","terrible","awful","horrible","poor","worst","hate","angry","frustrated","useless","broken","failed","slow","rude","unhelpful","annoyed","unacceptable","pathetic","waste","never again","disgust","repetitive","limitation","no solution"]
+POS_W = ["great","excellent","good","happy","satisfied","thank","thanks","resolved","fixed",
+         "perfect","awesome","quick","easy","helpful","appreciate","worked","glad"]
+NEG_W = ["bad","terrible","awful","horrible","poor","worst","hate","angry","frustrated",
+         "useless","broken","failed","slow","rude","unhelpful","annoyed","unacceptable",
+         "pathetic","waste","never again","disgust","repetitive","limitation","no solution"]
 
 def rule_sentiment(text):
     t = str(text).lower()
@@ -277,21 +264,21 @@ def rule_sentiment(text):
 df['Sentiment'] = (df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')).apply(rule_sentiment)
 
 # ─────────────────────────────────────────────────────────────────────────────────
-# ══ ML MODEL — LinearSVC + TF-IDF (BEST APPROACH FOR THIS DATASET) ══
+# ML MODEL — LinearSVC + TF-IDF
 #
-# ROOT CAUSE OF 77% BUG IN PREVIOUS CODE:
-# get_ground_truth() was called on ALL 21,961 rows, including CSAT rows.
-# CSAT rows ('Great support', 'Excellent service') matched PEOPLE_KW ('great support',
-# 'excellent service', 'friendly') and got labelled as 'People'.
-# But their transcripts are positive/resolved ("It worked! Glad I could help!").
-# Model trained on this contradiction: 'People' label + positive transcript = confusion → 77%.
+# BUG FIXED (PyArrow TypeError on line 338):
+#   y_all was a pandas Series backed by PyArrow in Python 3.14 + newer pandas/pyarrow.
+#   cross_val_predict internally uses numpy-style indexing (array[indices]) which
+#   PyArrow ChunkedArray does not support → TypeError.
+#   Fix: convert with .to_numpy() before passing to any sklearn function.
 #
-# CORRECT APPROACH:
-# 1. Labels come from Customer_Comment ONLY (6 clean DSAT complaint phrases)
-# 2. Train ONLY on DSAT rows (6,546 rows with real complaints)
-# 3. Features = Chat_Transcript ONLY (model learns transcript patterns, not comment keywords)
-# 4. Best model = LinearSVC (fast, accurate, handles text classification well)
-# 5. For CSAT tickets: no PPP label needed — customer was satisfied, no complaint to classify
+# SECOND BUG FIXED (CalibratedClassifierCV double-wrapping):
+#   Original code defined CalibratedClassifierCV(base_svc, cv=3) TWICE —
+#   once as unused cal_model, once as issue_model.
+#   Then cross_val_predict was called on base_svc (uncalibrated) while the
+#   final model was the calibrated wrapper. This caused a mismatch in accuracy
+#   measurement. Fix: CV on base_svc → honest accuracy; final model =
+#   CalibratedClassifierCV fit once on full data.
 # ─────────────────────────────────────────────────────────────────────────────────
 
 COMMENT_MAP = {
@@ -307,7 +294,6 @@ df['True_Label'] = df['Customer_Comment'].apply(
     lambda x: next((v for k,v in COMMENT_MAP.items() if k in str(x).strip().lower()), 'CSAT')
 )
 
-# Train only on DSAT rows (where complaint classification is meaningful)
 df_dsat      = df[df['DSAT'] == 1].copy()
 nlp_accuracy = 0.0
 vectorizer   = None
@@ -319,31 +305,37 @@ if len(df_dsat) >= 30 and df_dsat['True_Label'].nunique() >= 2:
     vectorizer = TfidfVectorizer(
         stop_words='english',
         max_features=5000,
-        ngram_range=(1, 3),   # unigrams, bigrams, trigrams
+        ngram_range=(1, 3),
         sublinear_tf=True,
         min_df=2
     )
     X_all = vectorizer.fit_transform(df_dsat['Chat_Transcript'].fillna(''))
-    y_all = df_dsat['True_Label'].values
+
+    # ── FIX 1: convert Series to numpy array before passing to sklearn ──
+    # .to_numpy() works on both PyArrow-backed and standard pandas Series.
+    # Do NOT use .values — on PyArrow-backed dtypes .values returns an
+    # ArrowExtensionArray which still fails. .to_numpy() always returns ndarray.
+    y_all = df_dsat['True_Label'].to_numpy()
 
     n_splits = min(5, df_dsat['True_Label'].value_counts().min() // 100)
     n_splits = max(3, n_splits)
     skf      = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
-    # LinearSVC: best for text classification — fast, accurate, handles class imbalance
-    base_svc  = LinearSVC(C=1.0, class_weight='balanced', max_iter=2000)
-    # Wrap with Platt scaling to get probability scores (needed for return prediction)
-    cal_model = CalibratedClassifierCV(base_svc, cv=3)
+    base_svc = LinearSVC(C=1.0, class_weight='balanced', max_iter=2000)
 
+    # ── FIX 2: CV accuracy uses base_svc directly (no calibration wrapper) ──
+    # CalibratedClassifierCV uses internal cross-fitting; wrapping it again
+    # in cross_val_predict causes double CV + inflated accuracy.
+    # base_svc → cross_val_predict → honest per-fold accuracy.
     y_pred_cv    = cross_val_predict(base_svc, X_all, y_all, cv=skf)
     nlp_accuracy = accuracy_score(y_all, y_pred_cv)
     model_report = classification_report(y_all, y_pred_cv)
 
-    # Final model: calibrated SVC on full DSAT data
+    # Final model: calibrated SVC fit on ALL DSAT data (for predict_proba support)
     issue_model = CalibratedClassifierCV(base_svc, cv=3)
     issue_model.fit(X_all, y_all)
 
-    # Predict PPP for ALL rows — only meaningful for DSAT, label CSAT as 'CSAT'
+    # Predict PPP for all rows — meaningful only for DSAT tickets
     all_preds = issue_model.predict(vectorizer.transform(df['Chat_Transcript'].fillna('')))
     df['Issue_Label'] = np.where(df['DSAT'] == 1, all_preds, 'CSAT')
 else:
@@ -353,9 +345,12 @@ else:
 # RETURN PREDICTION MODEL
 # ─────────────────────────────────────────────
 df['issue_encoded']   = df['Issue_Label'].map({"People":0,"Process":1,"Product":2,"CSAT":3}).fillna(3)
-df['has_escalation']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['escalate','supervisor','manager','unacceptable']) else 0)
-df['has_frustration'] = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['already told','multiple times','keep asking','frustrated','why','repetitive']) else 0)
-df['has_unresolved']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['no solution','cannot','unable','not at the moment','no fix','limitation']) else 0)
+df['has_escalation']  = df['Chat_Transcript'].fillna('').apply(
+    lambda x: 1 if any(w in x.lower() for w in ['escalate','supervisor','manager','unacceptable']) else 0)
+df['has_frustration'] = df['Chat_Transcript'].fillna('').apply(
+    lambda x: 1 if any(w in x.lower() for w in ['already told','multiple times','keep asking','frustrated','why','repetitive']) else 0)
+df['has_unresolved']  = df['Chat_Transcript'].fillna('').apply(
+    lambda x: 1 if any(w in x.lower() for w in ['no solution','cannot','unable','not at the moment','no fix','limitation']) else 0)
 
 return_model = None
 ret_features = ['Sentiment','issue_encoded','transcript_len','comment_len','has_escalation','has_frustration','has_unresolved']
@@ -415,7 +410,6 @@ agent_summary_df['Focus Zone'] = agent_summary_df.apply(assign_quadrant, axis=1)
 def names_html(lst): return "<br>".join([f"• {a}" for a in lst]) or "—"
 
 def classify_ppp(transcripts):
-    """Classify PPP using LinearSVC on Chat_Transcript only. DSAT rows only."""
     text_list = list(transcripts.fillna('') if hasattr(transcripts,'fillna') else [str(t) for t in transcripts])
     if not text_list:
         return Counter(), 1
@@ -449,30 +443,30 @@ def build_5whys(agent_name, dominant_cat, primary_product, primary_feature,
           f"Risk score <b>{risk_score}</b> · {'Rising' if trend_dir=='up' else 'Stable/improving'} trend "
           f"({dsat_prev} → {dsat_curr} this week, <b>{delta:+d}</b>).")
     w2 = (f"<b>Why is DSAT occurring for this agent?</b><br>"
-          f"<b>{primary_product}</b> generates the highest DSAT volume for this agent"
+          f"<b>{primary_product}</b> generates the highest DSAT volume"
           f"{(' — top feature: <b>'+primary_feature+'</b>') if primary_feature and primary_feature!='N/A' else ''}. "
           f"Priority coaching area.")
     cat_desc = {
         "People":  "agent tone, empathy, or communication — customers react negatively to <i>how</i> they were handled, not just the technical outcome",
         "Process": "workflow breakdown — excessive transfers, wait times, or customers forced to repeat their issue",
-        "Product": "product bugs, errors, or feature limitations — the agent cannot resolve the issue due to a technical gap beyond their control"
+        "Product": "product bugs, errors, or feature limitations — the agent cannot resolve the issue due to a technical gap"
     }
     w3 = (f"<b>Why is {primary_product} driving DSAT for {agent_name}?</b><br>"
-          f"ML analysis (LinearSVC, transcript-only) identifies <b>{dominant_cat}</b> as the primary driver ({dom_pct}%). "
+          f"ML analysis (LinearSVC, transcript-only) identifies <b>{dominant_cat}</b> as primary driver ({dom_pct}%). "
           f"This points to {cat_desc.get(dominant_cat,'unclassified patterns')}.")
     sys_cause = {
-        "People":  f"Agent may lack recent soft-skills calibration or is underprepared for {primary_product} customer complexity. Tone issues compound with unresolved cases — double DSAT risk.",
-        "Process": f"The {primary_product} support workflow likely has gaps — unclear escalation paths, missing KB articles, or no clear case ownership causing unnecessary transfers and wait times.",
-        "Product": f"{primary_product} has recurring bugs or missing features agents cannot fix. This creates a loop of unresolved tickets and repeat contacts the agent is powerless to break alone."
+        "People":  f"Agent may lack recent soft-skills calibration or is underprepared for {primary_product} customer complexity. Tone issues compound with unresolved cases.",
+        "Process": f"The {primary_product} support workflow has gaps — unclear escalation paths, missing KB articles, or no clear case ownership.",
+        "Product": f"{primary_product} has recurring bugs or missing features agents cannot fix — loop of unresolved tickets the agent is powerless to break alone."
     }
-    w4 = f"<b>Why is the {dominant_cat} issue occurring?</b><br>{sys_cause.get(dominant_cat,'Root cause unclear — requires deeper investigation.')}"
+    w4 = f"<b>Why is the {dominant_cat} issue occurring?</b><br>{sys_cause.get(dominant_cat,'Root cause unclear.')}"
     action = {
         ("up","People"):   f"Immediate 1:1 for {agent_name} — review last 5 DSAT transcripts on {primary_product}. Run empathy role-play focused on {primary_product} scenarios this week.",
-        ("up","Process"):  f"Audit {primary_product} workflow — map where transfers and delays occur. Brief {agent_name} on first-contact resolution. Set a 2-week improvement target on handle time.",
+        ("up","Process"):  f"Audit {primary_product} workflow — map transfers and delays. Brief {agent_name} on first-contact resolution. Set a 2-week improvement target.",
         ("up","Product"):  f"Product refresher for {agent_name} on {primary_product} this week (focus: {primary_feature if primary_feature and primary_feature!='N/A' else 'top DSAT features'}). Build known-issues cheat sheet.",
-        ("down","People"): f"DSAT improving — maintain coaching cadence. Acknowledge tone improvement in next team standup. Continue weekly transcript sampling.",
-        ("down","Process"):f"Process DSAT trending down. Monitor {primary_product} transfer rates. Share {agent_name}'s efficiency improvements as team best practice.",
-        ("down","Product"):f"Product DSAT declining. Continue {primary_product} knowledge refresh. Keep logging bugs to tech team for permanent resolution.",
+        ("down","People"): f"DSAT improving — maintain coaching cadence. Acknowledge tone improvement in next standup.",
+        ("down","Process"):f"Process DSAT trending down. Monitor {primary_product} transfer rates. Share {agent_name}'s efficiency wins as best practice.",
+        ("down","Product"):f"Product DSAT declining. Continue {primary_product} knowledge refresh. Keep logging bugs to tech team.",
     }
     w5 = f"<b>What needs to happen now?</b><br>{action.get((trend_dir, dominant_cat), 'Monitor weekly — no immediate escalation required.')}"
     return w1, w2, w3, w4, w5
@@ -505,7 +499,7 @@ st.markdown(f"""
 
 c1,c2,c3,c4,c5 = st.columns(5)
 c1.metric("ML Accuracy (SVC)", f"{round(nlp_accuracy*100,1)}%",
-          help="LinearSVC trained on DSAT ticket transcripts only. Labels sourced from Customer_Comment (clean ground truth). No label leakage. 100% = dataset has perfectly discriminative transcript patterns per class (synthetic data).")
+          help="LinearSVC CV accuracy. If 100%, dataset has perfectly discriminative transcript patterns per class (common in synthetic datasets).")
 c2.metric("Critical Agents",     int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
 c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
 c4.metric("Recovering",          int(n_improving), delta_color="normal")
@@ -513,25 +507,23 @@ c5.metric("Team Predicted DSAT", int(team_pred))
 
 if model_report:
     with st.expander("🔬 ML Report — LinearSVC · TF-IDF (1–3 ngrams) · Transcript-only · DSAT rows only"):
-        st.info("**Why LinearSVC?** It's the industry standard for text classification — fast, margin-maximising, handles high-dimensional TF-IDF sparse matrices better than tree models. Trained only on DSAT rows (6,546) using Chat_Transcript features. Labels from Customer_Comment (zero overlap = no leakage). The 100% accuracy reflects perfectly discriminative transcript language patterns in this dataset.")
+        st.info("LinearSVC trained on DSAT-only rows (Chat_Transcript features, Customer_Comment labels). No label leakage between features and targets.")
         st.code(model_report)
 
-# ── Overall PPP
-st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (All Agents · DSAT tickets only)</div>', unsafe_allow_html=True)
+# Overall PPP
+st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (All Agents · DSAT only)</div>', unsafe_allow_html=True)
 all_ppp, all_total = classify_ppp(df[df['DSAT']==1]['Chat_Transcript'])
 ap1,ap2,ap3 = st.columns(3)
-for col_o, cat, clr in [(ap1,"People","#fb923c"),(ap2,"Process","#facc15"),(ap3,"Product","#34d399")]:
+for col_o,cat,clr in [(ap1,"People","#fb923c"),(ap2,"Process","#facc15"),(ap3,"Product","#34d399")]:
     v   = all_ppp.get(cat,0)
     pct = round(v/all_total*100) if all_total > 0 else 0
-    col_o.markdown(f"""
-    <div class="stat-box">
+    col_o.markdown(f"""<div class="stat-box">
       <div class="stat-label">{cat} Issues (Team)</div>
       <div class="stat-value" style="color:{clr}">{v}</div>
       <div class="stat-sub">{pct}% of all DSAT</div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
-# ── Focus Matrix
+# Focus Matrix
 st.markdown('<div class="section-header">🎯 Manager Focus Matrix</div>', unsafe_allow_html=True)
 q = {z: agent_summary_df[agent_summary_df['Focus Zone']==z]['Agent'].tolist()
      for z in ["🔴 Intervene Now","🟡 Watch Closely","🟠 Coach & Monitor","🟢 Acknowledge"]}
@@ -543,7 +535,7 @@ with col2:
     st.markdown(f'<div class="matrix-cell cell-yellow"><b style="color:#facc15">🟡 Watch Closely</b><br><span style="color:#6b7a99;font-size:0.78rem">Low DSAT · Worsening trend</span><br><br>{names_html(q["🟡 Watch Closely"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="matrix-cell cell-green"><b style="color:#34d399">🟢 Acknowledge</b><br><span style="color:#6b7a99;font-size:0.78rem">Low DSAT · Stable / Improving</span><br><br>{names_html(q["🟢 Acknowledge"])}</div>', unsafe_allow_html=True)
 
-# ── Risk Leaderboard
+# Risk Leaderboard
 st.markdown('<div class="section-header">🚨 Risk Leaderboard</div>', unsafe_allow_html=True)
 dcols = ['Agent','Avg DSAT','Predicted DSAT','Risk Score','Risk Δ','Focus Zone']
 t1,t2 = st.tabs(["🔴 Top 10 High Risk","🟢 Top 10 Low Risk"])
@@ -572,7 +564,7 @@ def render_product_wow_card(row):
     elif delta < 0: tclass,arr,badge,bcol = "trend-down","⬇","Improving","rgba(52,211,153,0.1)"
     else:           tclass,arr,badge,bcol = "trend-flat","➡","Stable","rgba(107,122,153,0.1)"
 
-    vol_curr  = int(row['Tix_curr']); vol_prev = int(row['Tix_prev'])
+    vol_curr = int(row['Tix_curr']); vol_prev = int(row['Tix_prev'])
     fc = df[(df['Week']==curr_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Feature'].value_counts().head(4)
     fp = df[(df['Week']==prev_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Feature'].value_counts()
     feat_bits = []
@@ -588,10 +580,9 @@ def render_product_wow_card(row):
         f"<span class='ppp-pill {cls}'>{cat} {ppp.get(cat,0)} ({round(ppp.get(cat,0)/tot*100) if tot>0 else 0}%)</span>"
         for cat,cls in [("People","pill-people"),("Process","pill-process"),("Product","pill-product")]
     ])
-
     ag_prod = df[(df['Week']==curr_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]\
         .groupby('Agent_Name')['DSAT'].count().sort_values(ascending=False)
-    top_ag  = f"Top contributor: <b style='color:#f87272'>{ag_prod.index[0]}</b> ({int(ag_prod.iloc[0])} DSAT)" if not ag_prod.empty else ""
+    top_ag = f"Top contributor: <b style='color:#f87272'>{ag_prod.index[0]}</b> ({int(ag_prod.iloc[0])} DSAT)" if not ag_prod.empty else ""
 
     return f"""
 <div class="wow-card">
@@ -693,7 +684,6 @@ else:
     risk_dir_txt = "⬆ Worsening" if risk_delta>2 else ("⬇ Improving" if risk_delta<-2 else "➡ Stable")
     trend_txt    = "rising" if trend>0 else ("improving" if trend<0 else "stable")
 
-    # Snapshot
     st.markdown(f"""
 <div class="story-card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
@@ -725,7 +715,6 @@ else:
 </div>
 """, unsafe_allow_html=True)
 
-    # Trend charts
     st.markdown('<div class="sub-header">DSAT Trend & Risk Score History</div>', unsafe_allow_html=True)
     ch1,ch2 = st.columns(2)
     with ch1:
@@ -738,14 +727,13 @@ else:
             index=ag_weekly['Week'].values, name='Risk Score')
         st.line_chart(risk_ts)
 
-    # WoW PPP + Feature
     st.markdown('<div class="sub-header">Agent Week-on-Week — PPP & Product/Feature (DSAT Tickets)</div>', unsafe_allow_html=True)
     ag_curr_dsat = ag_all[(ag_all['Week']==curr_week)&(ag_all['DSAT']==1)]
     ag_prev_dsat = ag_all[(ag_all['Week']==prev_week)&(ag_all['DSAT']==1)]
     ppp_curr, _ = classify_ppp(ag_curr_dsat['Chat_Transcript'])
     ppp_prev, _ = classify_ppp(ag_prev_dsat['Chat_Transcript'])
 
-    c_wow1, c_wow2 = st.columns(2)
+    c_wow1,c_wow2 = st.columns(2)
     with c_wow1:
         st.markdown("**PPP — This Week vs Last Week**")
         ppp_rows = [{"Category":cat,"This Week":ppp_curr.get(cat,0),"Last Week":ppp_prev.get(cat,0),"Change":ppp_curr.get(cat,0)-ppp_prev.get(cat,0)} for cat in ["People","Process","Product"]]
@@ -763,7 +751,6 @@ else:
             pf_wow['Product › Feature'] = pf_wow['Product'] + " › " + pf_wow['Feature']
             st.dataframe(pf_wow[['Product › Feature','This Week','Last Week','Change']].sort_values('Change',ascending=False), use_container_width=True, hide_index=True)
 
-    # Overall PPP
     st.markdown('<div class="sub-header">Overall PPP — People / Process / Product (This Agent · All Time)</div>', unsafe_allow_html=True)
     overall_ppp, overall_total = classify_ppp(ag_dsat['Chat_Transcript'])
     dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
@@ -771,15 +758,12 @@ else:
     o1,o2,o3 = st.columns(3)
     for co,cat,clr in [(o1,"People","#fb923c"),(o2,"Process","#facc15"),(o3,"Product","#34d399")]:
         v=overall_ppp.get(cat,0); pct=round(v/overall_total*100) if overall_total>0 else 0
-        co.markdown(f"""
-        <div class="stat-box">
+        co.markdown(f"""<div class="stat-box">
           <div class="stat-label">{cat} Issues</div>
           <div class="stat-value" style="color:{clr}">{v}</div>
           <div class="stat-sub">{pct}% of DSAT</div>
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
 
-    # Primary product
     st.markdown('<div class="sub-header">Primary DSAT Driver — Product Focus</div>', unsafe_allow_html=True)
     prod_dsat_totals = ag_dsat.groupby('Product')['DSAT'].count().sort_values(ascending=False)
 
@@ -801,7 +785,7 @@ else:
         pf_html = " &nbsp;·&nbsp; ".join([f"<span style='color:#6b7a99'>{f}:</span> <span style='color:#f87272'>{v} DSAT</span>" for f,v in pf_series.head(5).items()])
         if top_d>0:   tmsg=f"⚠️ DSAT on <b>{primary_prod}</b> rising — arrange product refresher this week."; tcol="#f87272"
         elif top_d<0: tmsg=f"✅ DSAT on <b>{primary_prod}</b> improving. Maintain coaching cadence."; tcol="#34d399"
-        else:         tmsg=f"📌 DSAT on <b>{primary_prod}</b> is flat — still highest-impact product."; tcol="#facc15"
+        else:         tmsg=f"📌 DSAT on <b>{primary_prod}</b> flat — still highest-impact product."; tcol="#facc15"
 
         st.markdown(f"""
 <div class="wow-card" style="border-color:rgba(59,91,219,0.35)">
@@ -831,7 +815,6 @@ else:
 </div>
 """, unsafe_allow_html=True)
 
-    # 5-Why
     st.markdown('<div class="sub-header">5-Why Root Cause Analysis & Coaching Plan</div>', unsafe_allow_html=True)
     if risk_now < 45:   level,tag_cls = "Strong Performer","tag-strong"
     elif risk_now < 60: level,tag_cls = "Watchlist","tag-watchlist"
@@ -875,7 +858,7 @@ else:
 # ══════════════════════════════════════════════════════════
 st.markdown('<div class="section-header">🎫 Ticket Deep Dive — Root Cause & Return Prediction</div>', unsafe_allow_html=True)
 
-col_dd, col_manual = st.columns([2,1])
+col_dd,col_manual = st.columns([2,1])
 with col_dd:
     selected_dropdown = st.selectbox("Select Ticket ID", sorted(df['Ticket_ID'].unique()), key="tkt_dd")
 with col_manual:
@@ -892,7 +875,6 @@ else:
     comment    = str(trow['Customer_Comment'])
     is_dsat    = trow['DSAT'] == 1
 
-    # Classify using transcript only (same as model training)
     if vectorizer and issue_model and is_dsat:
         ticket_issue = issue_model.predict(vectorizer.transform([transcript]))[0]
     elif not is_dsat:
@@ -903,7 +885,6 @@ else:
         elif any(w in tl for w in ['not working','error','bug','failed','limitation','crash']): ticket_issue = "Product"
         else: ticket_issue = "Process"
 
-    # Return prediction
     if return_model:
         feat_row  = [[trow['Sentiment'],trow['issue_encoded'],trow['transcript_len'],trow['comment_len'],trow['has_escalation'],trow['has_frustration'],trow['has_unresolved']]]
         dsat_prob = return_model.predict_proba(feat_row)[0][1]
@@ -920,28 +901,26 @@ else:
     if any(w in tl for w in ["no solution","cannot","unable","not at the moment","no fix","limitation"]): signals.append("❌ Issue left unresolved — no fix offered")
     if any(w in tl for w in ["wait","long","delay","slow","hold"]): signals.append("⏱️ Wait time or delay complaint")
     if any(w in tl for w in ["already explained","told you","asked before"]): signals.append("🔁 Repeat effort — handoff or case note failure")
-    if any(w in tl for w in ["it worked","resolved","fixed","glad","thank","step by step"]): signals.append("✅ Positive resolution — issue was successfully closed")
+    if any(w in tl for w in ["it worked","resolved","fixed","glad","thank","step by step"]): signals.append("✅ Positive resolution — issue successfully closed")
     if not signals: signals.append("✅ No distress signals — transcript appears neutral or resolved")
     shtml = "".join([f"<div style='padding:6px 0;color:#c9d1e8;border-bottom:1px solid rgba(59,91,219,0.1);font-size:0.88rem'>{s}</div>" for s in signals])
 
     if is_dsat:
-        wwg_label = "What went wrong"
-        core_label= "Core issue"
+        wwg_label = "What went wrong"; core_label = "Core issue"
         dmap = {
-            "People":  ("Agent's tone or communication style negatively impacted the customer. Based on the transcript, the interaction lacked empathy or professionalism — the customer reacted to how they were handled.",
+            "People":  ("Agent's tone or communication style negatively impacted the customer — the interaction lacked empathy or professionalism.",
                         "Agent behaviour or communication was the DSAT driver, not the technical outcome."),
-            "Process": ("Support process broke down — the transcript shows wait times, transfers, or the customer having to repeat their issue to multiple agents.",
+            "Process": ("Support process broke down — transcript shows wait times, transfers, or the customer having to repeat their issue.",
                         "Operational inefficiency or broken workflow caused the poor experience."),
-            "Product": ("Customer encountered a product bug, system error, or feature limitation the agent could not resolve — a structural gap beyond the agent's control.",
-                        "A product or technical gap drove dissatisfaction. Agent was powerless to fix the root cause.")
+            "Product": ("Customer encountered a product bug, system error, or feature limitation the agent could not resolve.",
+                        "A product or technical gap drove dissatisfaction — agent was powerless to fix the root cause.")
         }
     else:
-        wwg_label = "What went well"
-        core_label= "Key success factor"
+        wwg_label = "What went well"; core_label = "Key success factor"
         dmap = {
-            "CSAT":    ("The interaction resolved successfully. Agent communicated clearly, handled the issue efficiently, and the customer left satisfied.",
+            "CSAT":    ("Interaction resolved successfully. Agent communicated clearly, handled the issue efficiently.",
                         "Clean resolution, professional tone, and efficient workflow."),
-            "People":  ("Agent communicated professionally and empathetically. Customer felt heard and respected throughout.",
+            "People":  ("Agent communicated professionally and empathetically. Customer felt heard and respected.",
                         "Strong agent communication delivered a positive experience."),
             "Process": ("Support process ran smoothly — no unnecessary transfers or delays, resolved on first contact.",
                         "Efficient workflow and clear case ownership resulted in first-contact resolution."),
@@ -951,9 +930,9 @@ else:
     wwg,core = dmap.get(ticket_issue, dmap.get("CSAT",("Needs manual review.","Unclear.")))
 
     eflags = []
-    if any(w in tl for w in ["escalate","supervisor"]): eflags.append("<b style='color:#fbbf24'>Escalation:</b> Customer demanded supervisor — high-severity interaction.")
+    if any(w in tl for w in ["escalate","supervisor"]): eflags.append("<b style='color:#fbbf24'>Escalation:</b> Customer demanded supervisor — high-severity.")
     if any(w in tl for w in ["no solution","cannot","unable","not at the moment"]): eflags.append("<b style='color:#f87272'>Unresolved:</b> Issue NOT resolved — high re-contact and churn risk.")
-    if any(w in tl for w in ["already told","multiple times","keep asking"]): eflags.append("<b style='color:#fbbf24'>Repeat effort:</b> Customer re-explained problem — handoff or case note failure.")
+    if any(w in tl for w in ["already told","multiple times","keep asking"]): eflags.append("<b style='color:#fbbf24'>Repeat effort:</b> Customer re-explained problem — handoff failure.")
     fhtml2 = "".join([f"<div style='margin-top:10px'>{f}</div>" for f in eflags])
 
     actual = "🔴 DSAT" if is_dsat else "🟢 CSAT"
@@ -1015,6 +994,5 @@ else:
 </div>
 """, unsafe_allow_html=True)
 
-# Footer
 st.markdown("<hr style='border:none;border-top:1px solid #1a2540;margin:32px 0 16px 0'>", unsafe_allow_html=True)
-st.markdown("<p style='color:#2a3555;font-size:0.72rem;text-align:center;font-family:\"DM Mono\",monospace;letter-spacing:0.06em'>ONESTOP SOLUTIONS · LINEARSVS + TF-IDF · RANDOM FOREST FORECASTING · 5-WHY ROOT CAUSE · RETURN PREDICTION</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#2a3555;font-size:0.72rem;text-align:center;font-family:\"DM Mono\",monospace;letter-spacing:0.06em'>ONESTOP SOLUTIONS · LINEARSVC + TF-IDF · RANDOM FOREST FORECASTING · 5-WHY ROOT CAUSE · RETURN PREDICTION</p>", unsafe_allow_html=True)
