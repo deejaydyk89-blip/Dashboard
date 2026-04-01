@@ -155,7 +155,7 @@ if len(df_labeled) >= 30 and df_labeled['True_Label'].nunique() >= 2:
         ngram_range=(1, 2), sublinear_tf=True, min_df=2
     )
     X_all = vectorizer.fit_transform(df_labeled['Chat_Transcript'])
-    y_all = df_labeled['True_Label'].values
+    y_all = np.array(df_labeled['True_Label'].tolist())
 
     n_splits = min(5, df_labeled['True_Label'].value_counts().min() // 50)
     n_splits = max(3, n_splits)
