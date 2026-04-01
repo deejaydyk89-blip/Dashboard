@@ -378,8 +378,11 @@ ap1,ap2,ap3 = st.columns(3)
 for col_o, cat in [(ap1,"People"),(ap2,"Process"),(ap3,"Product")]:
     v   = all_ppp.get(cat,0)
     pct = round(v/all_total*100) if all_total > 0 else 0
-    col_o.metric(f"{cat} Issues (Team)", v)
-st.caption(f"{pct}% of DSAT")
+    col_o.markdown(f"""
+**{cat} Issues (Team)**  
+<span style='font-size:1.6rem;font-weight:700;color:#7eb8f7'>{v}</span><br>
+<span style='color:#8b92ab;font-size:0.8rem'>{pct}% of DSAT</span>
+""", unsafe_allow_html=True)
 
 st.markdown('<div class="section-header">🎯 Manager Focus Matrix</div>', unsafe_allow_html=True)
 q = {z: agent_summary_df[agent_summary_df['Focus Zone']==z]['Agent'].tolist()
