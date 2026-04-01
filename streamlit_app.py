@@ -622,8 +622,14 @@ else:
 
     o1,o2,o3 = st.columns(3)
     for co,cat in [(o1,"People"),(o2,"Process"),(o3,"Product")]:
-        v=overall_ppp.get(cat,0); pct=round(v/overall_total*100) if overall_total>0 else 0
-        co.metric(f"{cat} Issues", v, delta=f"{pct}% of DSAT")
+    v = overall_ppp.get(cat,0)
+    pct = round(v/overall_total*100) if overall_total>0 else 0
+    
+    co.markdown(f"""
+    **{cat} Issues**  
+    <span style='font-size:1.6rem;font-weight:700;color:#7eb8f7'>{v}</span><br>
+    <span style='color:#8b92ab;font-size:0.8rem'>{pct}% of DSAT</span>
+    """, unsafe_allow_html=True)
 
     # Primary product driver
     st.markdown('<div class="sub-header">🎯 Primary DSAT Driver — Product Focus</div>', unsafe_allow_html=True)
