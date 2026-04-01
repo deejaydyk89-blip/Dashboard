@@ -369,7 +369,7 @@ if model_report:
         st.info("ℹ️ CV Accuracy normalized successfully. The ML pipeline now relies strictly on reading the transcript context, dropping perfectly clean label leakage and evaluating the real conversational data.")
         st.code(model_report)
 
-# Overall PPP — right after ML report
+# Overall PPP — right after ML report (USING CUSTOM HTML TO REMOVE ARROWS)
 st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (All Agents · All Time · DSAT tickets only)</div>', unsafe_allow_html=True)
 all_ppp, all_total = classify_ppp(df[df['DSAT']==1]['Chat_Transcript'])
 ap1,ap2,ap3 = st.columns(3)
@@ -377,9 +377,12 @@ for col_o, cat in [(ap1,"People"),(ap2,"Process"),(ap3,"Product")]:
     v   = all_ppp.get(cat,0)
     pct = round(v/all_total*100) if all_total > 0 else 0
     col_o.markdown(f"""
-**{cat} Issues (Team)** <span style='font-size:1.6rem;font-weight:700;color:#7eb8f7'>{v}</span><br>
-<span style='color:#8b92ab;font-size:0.8rem'>{pct}% of DSAT</span>
-""", unsafe_allow_html=True)
+    <div style="background:#1a1f2e; border:1px solid #2e3555; border-radius:12px; padding:16px 20px;">
+      <div style="color:#8b92ab; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">{cat} Issues (Team)</div>
+      <div style="color:#7eb8f7; font-size:1.7rem; font-weight:700; line-height:1.2;">{v}</div>
+      <div style="color:#8b92ab; font-size:0.85rem; margin-top:4px;">{pct}% of DSAT</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown('<div class="section-header">🎯 Manager Focus Matrix</div>', unsafe_allow_html=True)
 q = {z: agent_summary_df[agent_summary_df['Focus Zone']==z]['Agent'].tolist()
@@ -615,7 +618,7 @@ else:
             pf_wow['Product › Feature'] = pf_wow['Product'] + " › " + pf_wow['Feature']
             st.dataframe(pf_wow[['Product › Feature','This Week','Last Week','Change']].sort_values('Change',ascending=False), use_container_width=True, hide_index=True)
 
-    # Overall PPP for this agent
+    # Overall PPP for this agent (USING CUSTOM HTML TO REMOVE ARROWS)
     st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (This Agent · All Time)</div>', unsafe_allow_html=True)
     overall_ppp, overall_total = classify_ppp(ag_dsat['Chat_Transcript'])
     dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
@@ -623,7 +626,13 @@ else:
     o1,o2,o3 = st.columns(3)
     for co,cat in [(o1,"People"),(o2,"Process"),(o3,"Product")]:
         v=overall_ppp.get(cat,0); pct=round(v/overall_total*100) if overall_total>0 else 0
-        co.metric(f"{cat} Issues", v, delta=f"{pct}% of DSAT")
+        co.markdown(f"""
+        <div style="background:#1a1f2e; border:1px solid #2e3555; border-radius:12px; padding:16px 20px;">
+          <div style="color:#8b92ab; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;">{cat} Issues</div>
+          <div style="color:#7eb8f7; font-size:1.7rem; font-weight:700; line-height:1.2;">{v}</div>
+          <div style="color:#8b92ab; font-size:0.85rem; margin-top:4px;">{pct}% of DSAT</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     # Primary product driver
     st.markdown('<div class="sub-header">🎯 Primary DSAT Driver — Product Focus</div>', unsafe_allow_html=True)
