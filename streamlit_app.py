@@ -621,10 +621,10 @@ else:
     dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
 
     o1,o2,o3 = st.columns(3)
-    for co,cat in [(o1,"People"),(o2,"Process"),(o3,"Product")]:
-    v = overall_ppp.get(cat,0)
-    pct = round(v/overall_total*100) if overall_total>0 else 0
-    
+    for co, cat in [(o1,"People"), (o2,"Process"), (o3,"Product")]:
+    v = overall_ppp.get(cat, 0)
+    pct = round(v / overall_total * 100) if overall_total > 0 else 0
+
     co.markdown(f"""
     **{cat} Issues**  
     <span style='font-size:1.6rem;font-weight:700;color:#7eb8f7'>{v}</span><br>
