@@ -165,10 +165,10 @@ def get_label(text):
         "Process": process_hits
     }
 
-if max(scores.values()) == 0:
-    return "Other"
+    if max(scores.values()) == 0:
+        return "Other"
 
-return max(scores, key=scores.get)
+    return max(scores, key=scores.get)
 df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
 df_dsat = df_dsat[df_dsat['True_Label'] != "Other"]
 
