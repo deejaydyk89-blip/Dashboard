@@ -165,7 +165,7 @@ def get_label(text):
         "Process": process_hits
     }
 
-    if max(scores.values()) == 0:
+if max(scores.values()) == 0:
     return "Other"
 return max(scores, key=scores.get)
 
