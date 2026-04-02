@@ -142,8 +142,7 @@ def rule_sentiment(text):
 
 df['Sentiment'] = df['Combined_Text'].apply(rule_sentiment)
 # ─────────────────────────────────────────────
-# ─────────────────────────────────────────────
-# ML ROOT CAUSE MODEL (SEMI-SUPERVISED)
+# CLEAN ML ROOT CAUSE MODEL (FIXED)
 # ─────────────────────────────────────────────
 
 from sklearn.model_selection import StratifiedKFold
@@ -152,67 +151,62 @@ from sklearn.pipeline import Pipeline
 # Only DSAT data
 df_dsat = df[df['DSAT'] == 1].copy()
 
-# ─────────────────────────────────────────────
-# WEAK LABELING (NOT DIRECT KEYWORD MAPPING)
-# ─────────────────────────────────────────────
-def weak_label(text):
+# Better labeling (less dumb keywording)
+def get_label(text):
     t = str(text).lower()
 
     product_hits = sum(w in t for w in PRODUCT_KW)
     people_hits  = sum(w in t for w in PEOPLE_KW)
     process_hits = sum(w in t for w in PROCESS_KW)
 
-    # Confidence-based labeling (important)
-    if product_hits >= 2 and product_hits > people_hits:
-        return "Product"
-    elif people_hits >= 2 and people_hits > process_hits:
-        return "People"
-    elif process_hits >= 2:
-        return "Process"
-    else:
-        return "Unknown"
+    scores = {
+        "Product": product_hits,
+        "People": people_hits,
+        "Process": process_hits
+    }
 
-df_dsat['Weak_Label'] = df_dsat['Combined_Text'].apply(weak_label)
+    if max(scores.values()) == 0:
+        return "Other"
 
-# Keep only confident samples
-df_train = df_dsat[df_dsat['Weak_Label'] != "Unknown"].copy()
+    return max(scores, key=scores.get)
+df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
+df_dsat = df_dsat[df_dsat['True_Label'] != "Other"]
 
 nlp_accuracy = 0.0
 model_report = ""
 
-# ─────────────────────────────────────────────
-# TRAIN REAL MODEL
-# ─────────────────────────────────────────────
-if len(df_train) > 30 and df_train['Weak_Label'].nunique() > 1:
+if len(df_dsat) > 20 and df_dsat['True_Label'].nunique() > 1:
 
-    X_text = df_train['Combined_Text']
-    y = df_train['Weak_Label']
+    X_text = df_dsat['Combined_Text']
+    y = df_dsat['True_Label']
 
+    # PIPELINE (clean + proper)
     model_pipeline = Pipeline([
         ("tfidf", TfidfVectorizer(
             stop_words='english',
-            max_features=5000,
+            max_features=4000,
             ngram_range=(1,2),
-            min_df=3
+            min_df=2
         )),
         ("clf", LogisticRegression(
-            max_iter=1000,
+            max_iter=500,
             class_weight='balanced'
         ))
     ])
 
-    # REAL evaluation
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # Cross-validation (REAL accuracy)
+    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
     preds = cross_val_predict(model_pipeline, X_text, y, cv=skf)
 
     nlp_accuracy = accuracy_score(y, preds)
     model_report = classification_report(y, preds)
 
-    # Train final model
+    # Final training on full data
     model_pipeline.fit(X_text, y)
 
 else:
     model_pipeline = None
+
 
 # ─────────────────────────────────────────────
 # CLASSIFICATION FUNCTION (FIXED)
@@ -220,19 +214,16 @@ else:
 def classify_ticket(text):
     t = str(text).lower()
 
-    # Light business guardrails (not dominating ML)
-    if "feature not available" in t:
+    product_hits = sum(w in t for w in PRODUCT_KW)
+    people_hits  = sum(w in t for w in PEOPLE_KW)
+    process_hits = sum(w in t for w in PROCESS_KW)
+
+    # Strong product override ONLY if dominant
+    if product_hits >= 2 and product_hits > people_hits and product_hits > process_hits:
         return "Product"
 
     if model_pipeline:
-        proba = model_pipeline.predict_proba([text])[0]
-        pred  = model_pipeline.predict([text])[0]
-
-        # Confidence threshold (IMPORTANT)
-        if max(proba) < 0.55:
-            return "Process"  # safe fallback
-
-        return pred
+        return model_pipeline.predict([text])[0]
 
     return "Process"
 
