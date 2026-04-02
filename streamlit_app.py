@@ -108,91 +108,130 @@ prev_week    = weeks_sorted[-2] if len(weeks_sorted) >= 2 else curr_week
 # ─────────────────────────────────────────────
 # SENTIMENT
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# KEYWORD DEFINITIONS (CRITICAL FIX)
+# ─────────────────────────────────────────────
+
+PRODUCT_KW = [
+    "bug","error","issue","crash","not working","failed","failure",
+    "system","backend","api","technical","glitch","loading","timeout",
+    "feature not available","limitation","no fix","broken","doesn't work"
+]
+
+PEOPLE_KW = [
+    "rude","unprofessional","attitude","behavior","not helpful",
+    "no response","ignored","bad support","poor communication",
+    "agent said","told me","didn't explain","no empathy"
+]
+
+PROCESS_KW = [
+    "wait","delay","hold","transfer","multiple times","repeat",
+    "again","long time","slow process","workflow","escalation delay",
+    "no update","follow up","queue","pending"
+]
 POS_W = ["great","excellent","good","happy","satisfied","thank","thanks","resolved","fixed","perfect","awesome","quick","easy","helpful","appreciate","worked","glad"]
 NEG_W = ["bad","terrible","awful","horrible","poor","worst","hate","angry","frustrated","useless","broken","failed","slow","rude","unhelpful","annoyed","unacceptable","pathetic","waste","never again","disgust","repetitive","limitation","no solution"]
 
 def rule_sentiment(text):
     t = str(text).lower()
-    return sum(1 for w in POS_W if w in t) - sum(1 for w in NEG_W if w in t)
+    pos = sum(1 for w in POS_W if w in t)
+    neg = sum(1 for w in NEG_W if w in t)
+
+    # Strong negative boost (BPO reality)
+    return pos - (neg * 1.5)
 
 df['Sentiment'] = df['Combined_Text'].apply(rule_sentiment)
+# ─────────────────────────────────────────────
+# CLEAN ML ROOT CAUSE MODEL (FIXED)
+# ─────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# ══ HYBRID ML MODEL (COMMENT + TRANSCRIPT) TRAINED ONLY ON DSATS ══
-# ─────────────────────────────────────────────────────────────────────────────────
+from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import Pipeline
 
-PRODUCT_KW = ["feature is not available", "not working", "bug", "error", "crash", "glitch", "outage", "failed", "system issue", "limitation"]
-PROCESS_KW = ["wait", "delay", "slow", "transfer", "hold", "repetitive", "keep asking", "already told"]
-PEOPLE_KW  = ["rude", "unhelpful", "attitude", "escalate", "supervisor", "manager", "dismissive", "unprofessional", "poor service"]
-
-# Isolate DSATs for training
+# Only DSAT data
 df_dsat = df[df['DSAT'] == 1].copy()
 
-def get_dsat_ground_truth(combined_text):
-    """
-    Generates Ground Truth for training based on combined text.
-    Prioritizes Product bugs, then People attitude, then Process.
-    """
-    t = str(combined_text).lower()
-    if any(w in t for w in PRODUCT_KW): return "Product"
-    if any(w in t for w in PEOPLE_KW): return "People"
-    return "Process" # Fallback for delays/transfers/generic complaints
+# Better labeling (less dumb keywording)
+def get_label(text):
+    t = str(text).lower()
 
-df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_dsat_ground_truth)
+    product_hits = sum(w in t for w in PRODUCT_KW)
+    people_hits  = sum(w in t for w in PEOPLE_KW)
+    process_hits = sum(w in t for w in PROCESS_KW)
+
+    scores = {
+        "Product": product_hits,
+        "People": people_hits,
+        "Process": process_hits
+    }
+
+    if max(scores.values()) == 0:
+    return "Other"
+return max(scores, key=scores.get)
+
+df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
+df_dsat = df_dsat[df_dsat['True_Label'] != "Other"]
 
 nlp_accuracy = 0.0
-vectorizer   = None
-issue_model  = None
 model_report = ""
 
-if len(df_dsat) >= 15 and df_dsat['True_Label'].nunique() >= 2:
-    # Use robust TF-IDF with Unigrams & Bigrams
-    vectorizer = TfidfVectorizer(
-        stop_words='english', max_features=3000,
-        ngram_range=(1, 2), sublinear_tf=True, min_df=2
-    )
-    X_train = vectorizer.fit_transform(df_dsat['Combined_Text'])
-    y_train = np.array(df_dsat['True_Label'].tolist())
+if len(df_dsat) > 20 and df_dsat['True_Label'].nunique() > 1:
 
-    n_splits = min(5, max(2, df_dsat['True_Label'].value_counts().min()))
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    
-    # ML MODEL: Logistic Regression (Highly effective for this NLP task)
-    log_reg = LogisticRegression(class_weight='balanced', C=1.0, solver='lbfgs', max_iter=500, random_state=42)
-    
-    y_pred_cv = cross_val_predict(log_reg, X_train, y_train, cv=skf)
-    nlp_accuracy = accuracy_score(y_train, y_pred_cv)
-    model_report = classification_report(y_train, y_pred_cv)
+    X_text = df_dsat['Combined_Text']
+    y = df_dsat['True_Label']
 
-    # Train final model
-    issue_model = LogisticRegression(class_weight='balanced', C=1.0, solver='lbfgs', max_iter=500, random_state=42)
-    issue_model.fit(X_train, y_train)
+    # PIPELINE (clean + proper)
+    model_pipeline = Pipeline([
+        ("tfidf", TfidfVectorizer(
+            stop_words='english',
+            max_features=4000,
+            ngram_range=(1,2),
+            min_df=2
+        )),
+        ("clf", LogisticRegression(
+            max_iter=500,
+            class_weight='balanced'
+        ))
+    ])
 
-# Initialize column
+    # Cross-validation (REAL accuracy)
+    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
+    preds = cross_val_predict(model_pipeline, X_text, y, cv=skf)
+
+    nlp_accuracy = accuracy_score(y, preds)
+    model_report = classification_report(y, preds)
+
+    # Final training on full data
+    model_pipeline.fit(X_text, y)
+
+else:
+    model_pipeline = None
+
+
+# ─────────────────────────────────────────────
+# CLASSIFICATION FUNCTION (FIXED)
+# ─────────────────────────────────────────────
+def classify_ticket(text):
+    t = str(text).lower()
+
+    product_hits = sum(w in t for w in PRODUCT_KW)
+    people_hits  = sum(w in t for w in PEOPLE_KW)
+    process_hits = sum(w in t for w in PROCESS_KW)
+
+    # Strong product override ONLY if dominant
+    if product_hits >= 2 and product_hits > people_hits and product_hits > process_hits:
+        return "Product"
+
+    if model_pipeline:
+        return model_pipeline.predict([text])[0]
+
+    return "Process"
+
+# Apply classification
 df['Issue_Label'] = "Other"
 
-# LIVE INFERENCE LOGIC (Applies ML + Strict Business Override)
-def classify_ticket(combined_text):
-    if not issue_model or not vectorizer:
-        return "Other"
-    
-    t = str(combined_text).lower()
-    
-    # 1. Statistical ML Prediction
-    ml_pred = issue_model.predict(vectorizer.transform([combined_text]))[0]
-    
-    # 2. Strict Business Override (Ensures 'feature is not available' is ALWAYS Product)
-    if any(w in t for w in PRODUCT_KW):
-        return "Product"
-        
-    return ml_pred
-
-# Apply only to DSAT rows to preserve dashboard logic
-dsat_indices = df[df['DSAT'] == 1].index
-if len(dsat_indices) > 0:
-    df.loc[dsat_indices, 'Issue_Label'] = df.loc[dsat_indices, 'Combined_Text'].apply(classify_ticket)
-
-
+dsat_idx = df[df['DSAT'] == 1].index
+df.loc[dsat_idx, 'Issue_Label'] = df.loc[dsat_idx, 'Combined_Text'].apply(classify_ticket)
 # ─────────────────────────────────────────────
 # RETURN PREDICTION MODEL
 # ─────────────────────────────────────────────
@@ -401,6 +440,9 @@ prod_wow['Rate_curr']  = (prod_wow['DSAT_curr'] / prod_wow['Tix_curr'].replace(0
 prod_wow['Rate_prev']  = (prod_wow['DSAT_prev'] / prod_wow['Tix_prev'].replace(0,1) * 100).round(1)
 prod_wow['Rate_delta'] = (prod_wow['Rate_curr'] - prod_wow['Rate_prev']).round(1)
 prod_wow = prod_wow.sort_values('Delta', ascending=False)
+# Show only impactful products
+impact_filter = (prod_wow['Delta'] > 2) | (prod_wow['Rate_delta'] > 2)
+filtered_prod_wow = prod_wow[impact_filter]
 
 st.markdown('<div class="sub-header">📦 Product DSAT — This Week vs Last Week</div>', unsafe_allow_html=True)
 
@@ -468,7 +510,11 @@ def render_product_wow_card(row):
 </div>
 """
 
-for _, row in prod_wow.head(3).iterrows():
+show_all = st.checkbox("Show All Products")
+
+display_df = prod_wow if show_all else filtered_prod_wow
+
+for _, row in display_df.head(3).iterrows():
     st.markdown(render_product_wow_card(row), unsafe_allow_html=True)
 if len(prod_wow) > 3:
     with st.expander("🔽 View Remaining Products"):
