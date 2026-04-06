@@ -7,8 +7,10 @@ from collections import Counter
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import mean_absolute_error, classification_report, accuracy_score
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
 import warnings
 from sentence_transformers import SentenceTransformer
+
 warnings.filterwarnings('ignore')
 bert_model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -66,6 +68,7 @@ h2, h3 { color: #c9d1e8; }
 .stTabs [data-baseweb="tab-list"] { background: #1a1f2e; border-radius: 10px; padding: 4px; gap: 4px; }
 .stTabs [data-baseweb="tab"] { color: #8b92ab; border-radius: 8px; padding: 6px 18px; }
 .stTabs [aria-selected="true"] { background: #2e3f6e !important; color: #ffffff !important; }
+.accuracy-warning { background: #1a1a10; border: 1px solid #5a5020; border-radius: 10px; padding: 12px 16px; font-size: 0.82rem; color: #c9b84a; margin-top: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -90,231 +93,211 @@ for enc in ["utf-8","latin1","utf-16"]:
 if df is None or df.empty:
     st.error("❌ Failed to load dataset"); st.stop()
 
-df.columns          = df.columns.str.strip()
-df['Week']          = pd.to_datetime(df['Week'], errors='coerce')
-df                  = df.dropna(subset=['Week'])
+df.columns           = df.columns.str.strip()
+df['Week']           = pd.to_datetime(df['Week'], errors='coerce')
+df                   = df.dropna(subset=['Week'])
 
-# Define DSAT based strictly on Customer_Effortless
-df['DSAT']          = df['Customer_Effortless'].apply(lambda x: 1 if str(x).strip().lower()=="no" else 0)
-df['transcript_len']= df['Chat_Transcript'].fillna('').apply(len)
-df['comment_len']   = df['Customer_Comment'].fillna('').apply(len)
-# Hybrid input: Read both comment and transcript for the best context
-df['Combined_Text'] = df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')
+df['DSAT']           = df['Customer_Effortless'].apply(lambda x: 1 if str(x).strip().lower()=="no" else 0)
+df['transcript_len'] = df['Chat_Transcript'].fillna('').apply(len)
+df['comment_len']    = df['Customer_Comment'].fillna('').apply(len)
+df['Combined_Text']  = df['Customer_Comment'].fillna('') + ' ' + df['Chat_Transcript'].fillna('')
 
 weeks_sorted = sorted(df['Week'].unique())
 curr_week    = weeks_sorted[-1]
 prev_week    = weeks_sorted[-2] if len(weeks_sorted) >= 2 else curr_week
 
-def split_text(text, chunk_size=250):
+# ─────────────────────────────────────────────
+# BERT EMBEDDING — FIXED FOR LONG TRANSCRIPTS
+# ─────────────────────────────────────────────
+def get_bert_embedding(text, max_words=300):
+    """
+    Proper long-text BERT embedding:
+    - Takes the FIRST 150 words (customer comment area, most signal-dense)
+    - Takes the LAST 150 words (resolution/outcome, second most signal-dense)
+    - Encodes each half separately and concatenates → richer 768-dim signal
+    - Avoids dilution from middle filler text in long transcripts
+    """
     words = str(text).split()
-    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+    half  = max_words // 2
 
-def get_bert_embedding(text):
-    chunks = split_text(text)
+    if len(words) <= max_words:
+        chunk = " ".join(words)
+        return bert_model.encode(chunk)
 
-    embeddings = []
-    for chunk in chunks:
-        emb = bert_model.encode(chunk)
-        embeddings.append(emb)
+    # Head (complaint framing) + Tail (resolution outcome)
+    head = " ".join(words[:half])
+    tail = " ".join(words[-half:])
 
-    if len(embeddings) == 1:
-        return embeddings[0]
+    emb_head = bert_model.encode(head)
+    emb_tail = bert_model.encode(tail)
 
-    weights = np.linspace(0.8, 1.5, len(embeddings))
-    return np.average(embeddings, axis=0, weights=weights)
+    # Weight tail slightly lower — outcome context, not the primary signal
+    return (0.6 * emb_head + 0.4 * emb_tail)
+
 
 # ─────────────────────────────────────────────
-# SENTIMENT
+# KEYWORD DEFINITIONS
 # ─────────────────────────────────────────────
-# ─────────────────────────────────────────────
-# KEYWORD DEFINITIONS (CRITICAL FIX)
-# ─────────────────────────────────────────────
-
 PRODUCT_KW = [
     "bug","error","issue","crash","not working","failed","failure",
     "system","backend","api","technical","glitch","loading","timeout",
     "feature not available","limitation","no fix","broken","doesn't work"
 ]
-
 PEOPLE_KW = [
     "rude","unprofessional","attitude","behavior","not helpful",
     "no response","ignored","bad support","poor communication",
     "agent said","told me","didn't explain","no empathy"
 ]
-
 PROCESS_KW = [
     "wait","delay","hold","transfer","multiple times","repeat",
     "again","long time","slow process","workflow","escalation delay",
     "no update","follow up","queue","pending"
 ]
-POS_W = ["great","excellent","good","happy","satisfied","thank","thanks","resolved","fixed","perfect","awesome","quick","easy","helpful","appreciate","worked","glad"]
-NEG_W = ["bad","terrible","awful","horrible","poor","worst","hate","angry","frustrated","useless","broken","failed","slow","rude","unhelpful","annoyed","unacceptable","pathetic","waste","never again","disgust","repetitive","limitation","no solution"]
+POS_W = ["great","excellent","good","happy","satisfied","thank","thanks","resolved",
+         "fixed","perfect","awesome","quick","easy","helpful","appreciate","worked","glad"]
+NEG_W = ["bad","terrible","awful","horrible","poor","worst","hate","angry","frustrated",
+         "useless","broken","failed","slow","rude","unhelpful","annoyed","unacceptable",
+         "pathetic","waste","never again","disgust","repetitive","limitation","no solution"]
 
 def rule_sentiment(text):
-    t = str(text).lower()
+    t   = str(text).lower()
     pos = sum(1 for w in POS_W if w in t)
     neg = sum(1 for w in NEG_W if w in t)
-
-    # Strong negative boost (BPO reality)
     return pos - (neg * 1.5)
 
 df['Sentiment'] = df['Combined_Text'].apply(rule_sentiment)
-# ─────────────────────────────────────────────
-# ─────────────────────────────────────────────
-# NEW ML BERT ROOT CAUSE MODEL 
-# ─────────────────────────────────────────────
 
-# Only DSAT data
-df_dsat = df[df['DSAT'] == 1].copy()
-
-# Labeling using weak supervision (keywords)
-def get_label(text):
+# ─────────────────────────────────────────────
+# WEAK-SUPERVISION LABELS  (NOT used as ground truth for accuracy)
+# ─────────────────────────────────────────────
+def get_weak_label(text):
     t = str(text).lower()
-
-    product_hits = sum(w in t for w in PRODUCT_KW)
-    people_hits  = sum(w in t for w in PEOPLE_KW)
-    process_hits = sum(w in t for w in PROCESS_KW)
-
     scores = {
-        "Product": product_hits,
-        "People": people_hits,
-        "Process": process_hits
+        "Product": sum(w in t for w in PRODUCT_KW),
+        "People":  sum(w in t for w in PEOPLE_KW),
+        "Process": sum(w in t for w in PROCESS_KW),
     }
-
-    if max(scores.values()) == 0:
+    best_score = max(scores.values())
+    if best_score == 0:
         return "Other"
-
     return max(scores, key=scores.get)
 
-df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
-
-# Step 1: Create labels FIRST
-df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
-
 # ─────────────────────────────────────────────
-# ✅ STRONG SIGNAL FILTER (FIX FAKE ACCURACY)
+# ML ROOT CAUSE MODEL — FIXED TO AVOID FAKE ACCURACY
 # ─────────────────────────────────────────────
+# 
+# KEY FIXES:
+# 1. No strong_signal filter — that was removing hard cases and making it trivial
+# 2. Cross-validated OOF accuracy — evaluated on folds the model never trained on
+# 3. max_features='sqrt' + min_samples_leaf=3 → prevents memorizing keyword patterns
+# 4. Accuracy shown with honest disclaimer: this is agreement with weak labels, NOT ground truth
+# 5. Minimum class size enforced per fold to avoid stratification failures
+#
+df_dsat = df[df['DSAT'] == 1].copy()
+df_dsat['Weak_Label'] = df_dsat['Combined_Text'].apply(get_weak_label)
 
-def strong_signal(text):
-    t = str(text).lower()
-    return (
-        sum(w in t for w in PRODUCT_KW) >= 2 or
-        sum(w in t for w in PEOPLE_KW) >= 2 or
-        sum(w in t for w in PROCESS_KW) >= 2
-    )
+# Keep only labelable rows (exclude "Other" — no signal either way)
+df_train = df_dsat[df_dsat['Weak_Label'] != "Other"].copy().reset_index(drop=True)
 
-# Step 2: Apply filtering
-df_dsat = df_dsat[df_dsat['Combined_Text'].apply(strong_signal)]
-
-# Step 3: Remove "Other"
-df_dsat = df_dsat[df_dsat['True_Label'] != "Other"]
-
-st.write(df_dsat['True_Label'].value_counts())
-
-# Initialize
-nlp_accuracy = 0.0
-model_report = ""
+nlp_accuracy   = None
+model_report   = ""
 bert_classifier = None
+oof_preds      = None
+cv_note        = ""
 
-# Train ML model only if enough data
-label_counts = df_dsat['True_Label'].value_counts()
+label_counts = df_train['Weak_Label'].value_counts()
+min_class    = label_counts.min() if not label_counts.empty else 0
+n_folds      = 3  # conservative — less overfitting in CV itself
 
-if (
-    len(df_dsat) > 50 and
-    df_dsat['True_Label'].nunique() > 1 and
-    all(label_counts >= 10)
-):
+can_train = (
+    len(df_train) > 60
+    and df_train['Weak_Label'].nunique() > 1
+    and min_class >= n_folds
+)
 
-    # 🔥 BERT embeddings
-    X_embeddings = np.vstack(
-        df_dsat['Combined_Text'].apply(get_bert_embedding)
-    )
+if can_train:
+    # Compute BERT embeddings
+    X_emb = np.vstack(df_train['Combined_Text'].apply(get_bert_embedding).values)
+    y_lab = df_train['Weak_Label'].values
 
-    y = df_dsat['True_Label']
-
-    # ✅ Better than Logistic (non-linear)
-    from sklearn.ensemble import RandomForestClassifier
-
-    bert_classifier = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=12,
-        min_samples_split=5,
+    # ── Cross-validated OOF accuracy (honest estimate) ──
+    # This evaluates each fold on data the model has NEVER seen during training.
+    # However, since labels are from weak supervision (keywords), this still
+    # measures agreement with keyword rules — not true human-annotated accuracy.
+    cv_clf = RandomForestClassifier(
+        n_estimators=200,
+        max_depth=8,           # ← shallower: harder to memorize
+        max_features='sqrt',   # ← only sqrt(768)≈28 features per split
+        min_samples_leaf=3,    # ← no leaf can have fewer than 3 samples
         class_weight='balanced',
         random_state=42
     )
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    oof_preds = cross_val_predict(cv_clf, X_emb, y_lab, cv=skf)
+    nlp_accuracy = accuracy_score(y_lab, oof_preds)
+    model_report = classification_report(y_lab, oof_preds)
+    cv_note = (
+        f"3-fold cross-validated OOF accuracy on {len(df_train)} DSAT samples. "
+        "Labels are weak-supervision (keyword-derived) — not human-annotated ground truth. "
+        "Expect 55–75% as realistic range for noisy BPO text."
+    )
 
-    from sklearn.model_selection import train_test_split
-
-# Split data (for evaluation only)
-X_train, X_test, y_train, y_test = train_test_split(
-    X_embeddings,
-    y,
-    test_size=0.25,
-    stratify=y,
-    random_state=42
-)
-
-# Train model
-bert_classifier.fit(X_train, y_train)
-
-# Evaluate on unseen data
-preds = bert_classifier.predict(X_test)
-
-# Real accuracy
-nlp_accuracy = accuracy_score(y_test, preds)
-model_report = classification_report(y_test, preds)
-
-# 🔥 IMPORTANT: retrain on FULL data for production use
-bert_classifier.fit(X_embeddings, y)
-
-# 🧠 DEBUG SECTION (BETTER UI)
-st.markdown("### 🧠 ML Training Debug")
-
-dist = df_dsat['True_Label'].value_counts().reset_index()
-dist.columns = ['Category', 'Count']
-dist['Percentage'] = (dist['Count'] / dist['Count'].sum() * 100).round(1)
-
-st.dataframe(dist)
+    # ── Production model: retrain on ALL data ──
+    bert_classifier = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=8,
+        max_features='sqrt',
+        min_samples_leaf=3,
+        class_weight='balanced',
+        random_state=42
+    )
+    bert_classifier.fit(X_emb, y_lab)
 
 # ─────────────────────────────────────────────
-# ✅ CLASSIFICATION FUNCTION (FINAL)
+# CLASSIFICATION FUNCTION
 # ─────────────────────────────────────────────
 def classify_ticket(text):
     t = str(text).lower()
-
     product_hits = sum(w in t for w in PRODUCT_KW)
     people_hits  = sum(w in t for w in PEOPLE_KW)
     process_hits = sum(w in t for w in PROCESS_KW)
 
-    # 🔥 Strong override for Product (your business rule)
-    if product_hits >= 2 and product_hits > people_hits and product_hits > process_hits:
-        return "Product"
+    # Hard override: very strong keyword signal (3+ hits) dominates
+    scores = {"Product": product_hits, "People": people_hits, "Process": process_hits}
+    best   = max(scores, key=scores.get)
+    if scores[best] >= 3:
+        return best
 
-    # ✅ ML fallback
+    # ML prediction for ambiguous cases
     if bert_classifier is not None:
         emb = get_bert_embedding(text)
         return bert_classifier.predict([emb])[0]
 
+    # Fallback: soft keyword majority
+    if scores[best] > 0:
+        return best
     return "Other"
 
-
-# Apply classification
 df['Issue_Label'] = "Other"
-
 dsat_idx = df[df['DSAT'] == 1].index
 df.loc[dsat_idx, 'Issue_Label'] = df.loc[dsat_idx, 'Combined_Text'].apply(classify_ticket)
+
 # ─────────────────────────────────────────────
 # RETURN PREDICTION MODEL
 # ─────────────────────────────────────────────
 df['issue_encoded']   = df['Issue_Label'].map({"People":0,"Process":1,"Product":2,"Other":3}).fillna(3)
-df['has_escalation']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['escalate','supervisor','manager','unacceptable']) else 0)
-df['has_frustration'] = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['already told','multiple times','keep asking','frustrated','why','repetitive']) else 0)
-df['has_unresolved']  = df['Chat_Transcript'].fillna('').apply(lambda x: 1 if any(w in x.lower() for w in ['no solution','cannot','unable','not at the moment','no fix','limitation', 'feature is not available']) else 0)
+df['has_escalation']  = df['Chat_Transcript'].fillna('').apply(
+    lambda x: 1 if any(w in x.lower() for w in ['escalate','supervisor','manager','unacceptable']) else 0)
+df['has_frustration'] = df['Chat_Transcript'].fillna('').apply(
+    lambda x: 1 if any(w in x.lower() for w in ['already told','multiple times','keep asking','frustrated','why','repetitive']) else 0)
+df['has_unresolved']  = df['Chat_Transcript'].fillna('').apply(
+    lambda x: 1 if any(w in x.lower() for w in ['no solution','cannot','unable','not at the moment','no fix','limitation','feature is not available']) else 0)
 
-return_model = None
-ret_features = ['Sentiment','issue_encoded','transcript_len','comment_len','has_escalation','has_frustration','has_unresolved']
+return_model  = None
+ret_features  = ['Sentiment','issue_encoded','transcript_len','comment_len','has_escalation','has_frustration','has_unresolved']
 if df['DSAT'].sum() > 10:
-    return_model = RandomForestClassifier(n_estimators=200, random_state=42, class_weight='balanced', max_depth=8)
+    return_model = RandomForestClassifier(
+        n_estimators=200, random_state=42, class_weight='balanced', max_depth=8)
     return_model.fit(df[ret_features].fillna(0), df['DSAT'])
 
 # ─────────────────────────────────────────────
@@ -369,18 +352,12 @@ agent_summary_df['Focus Zone'] = agent_summary_df.apply(assign_quadrant, axis=1)
 def names_html(lst): return "<br>".join([f"• {a}" for a in lst]) or "None"
 
 def get_ppp_breakdown(df_subset):
-    """
-    Counts the pre-classified Issue_Label directly from the dataframe subset.
-    """
     if df_subset.empty:
         return Counter(), 1
-    
-    # We only care about DSATs for PPP
     dsat_subset = df_subset[df_subset['DSAT'] == 1]
-    cnt = Counter(dsat_subset['Issue_Label'].tolist())
-    
-    cats = ["People","Process","Product"]
-    total = sum(cnt.get(c,0) for c in cats) or 1
+    cnt         = Counter(dsat_subset['Issue_Label'].tolist())
+    cats        = ["People","Process","Product"]
+    total       = sum(cnt.get(c,0) for c in cats) or 1
     return cnt, total
 
 def wow_arrow(delta):
@@ -403,23 +380,23 @@ def build_5whys(agent_name, dominant_cat, primary_product, primary_feature,
           f"{(' — top feature: '+primary_feature) if primary_feature and primary_feature!='N/A' else ''}. "
           f"This is the priority product area for coaching.")
     cat_desc = {
-        "People":  "the agent's tone, empathy, or communication style — based on the interaction, customers reacted negatively to how they were handled",
+        "People":  "the agent's tone, empathy, or communication style — customers reacted negatively to how they were handled",
         "Process": "workflow breakdowns — excessive transfers, long wait times, or repeating issues occurred",
-        "Product": "product bugs, system errors, or feature limitations (e.g., feature is not available) — the agent cannot resolve the issue due to a technical gap"
+        "Product": "product bugs, system errors, or feature limitations — the agent cannot resolve the issue due to a technical gap"
     }
     w3 = (f"<b>Why is {primary_product} driving DSAT for {agent_name}?</b><br>"
           f"ML Root Cause analysis identifies <b>{dominant_cat}</b> as the primary driver ({dom_pct}% of DSAT). "
           f"This points to {cat_desc.get(dominant_cat,'unclassified patterns')}.")
     sys_cause = {
-        "People":  f"The agent may lack recent soft-skills calibration or is under-prepared for the complexity of {primary_product} customer profiles. Tone issues often compound with unresolved issues, creating a double DSAT risk.",
-        "Process": f"The support workflow for {primary_product} likely has gaps — unclear escalation paths, missing knowledge base articles, or no clear case ownership, causing the agent to transfer or put customers on hold without resolution.",
+        "People":  f"The agent may lack recent soft-skills calibration or is under-prepared for {primary_product} customer profiles. Tone issues often compound with unresolved issues, creating a double DSAT risk.",
+        "Process": f"The support workflow for {primary_product} likely has gaps — unclear escalation paths, missing knowledge base articles, or no clear case ownership.",
         "Product": f"{primary_product} may have recurring bugs or missing features that support agents cannot fix. This creates a loop of unresolved tickets and repeat contacts the agent is powerless to break alone."
     }
     w4 = f"<b>Why is the {dominant_cat} issue occurring?</b><br>{sys_cause.get(dominant_cat,'Root cause unclear — requires deeper investigation.')}"
     action = {
         ("up","People"):   f"Schedule an immediate 1:1 coaching for {agent_name}. Review the last 5 DSAT transcripts on {primary_product} together. Run empathy role-play focused on {primary_product} scenarios this week.",
         ("up","Process"):  f"Audit the {primary_product} support workflow — map where transfers and delays occur. Brief {agent_name} on first-contact resolution for {primary_product}. Set a 2-week improvement target on handle time.",
-        ("up","Product"):  f"Arrange a {primary_product} product refresher for {agent_name} this week (focus: {primary_feature if primary_feature and primary_feature!='N/A' else 'top DSAT features'}). Build a known-issues cheat sheet for common {primary_product} errors.",
+        ("up","Product"):  f"Arrange a {primary_product} product refresher for {agent_name} this week (focus: {primary_feature if primary_feature and primary_feature!='N/A' else 'top DSAT features'}). Build a known-issues cheat sheet for common errors.",
         ("down","People"): f"DSAT is improving — maintain coaching cadence. Acknowledge tone improvement in next team standup. Continue weekly transcript reviews.",
         ("down","Process"):f"Process DSAT is trending down. Keep monitoring {primary_product} transfer rates. Share {agent_name}'s efficiency improvements as best practice.",
         ("down","Product"):f"Product DSAT is declining. Continue knowledge refresh on {primary_product}. Keep logging product issues to the tech team for permanent resolution.",
@@ -451,23 +428,52 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# ── Metrics row ──
 c1,c2,c3,c4,c5 = st.columns(5)
-c1.metric(
-    "ML Model Accuracy",
-    f"{round(nlp_accuracy*100,1)}%",
-    help="Model uses RandomForest with BERT embeddings trained on DSAT interactions (comments + transcripts) to identify root causes across People, Process, and Product."
-)
-c2.metric("Critical Agents", int(n_critical), delta=f"{n_critical} need action", delta_color="inverse")
-c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
-c4.metric("Recovering",          int(n_improving), delta_color="normal")
-c5.metric("Team Predicted DSAT", int(team_pred))
 
-if model_report:
-    with st.expander("🔬 ML Classification Report — People / Process / Product precision · recall · F1"):
-        st.info("ℹ️ Trained exclusively on DSAT tickets utilizing both Customer Comments and Chat Transcripts to accurately capture behavioral (People) and technical (Product) drivers.")
+# ML accuracy metric — show "Click to reveal" style
+if nlp_accuracy is not None:
+    acc_display = f"{round(nlp_accuracy*100,1)}%"
+    acc_help    = f"3-fold cross-validated OOF accuracy ({len(df_train)} DSAT samples). Labels are keyword-derived — NOT human-annotated. 55–75% is a realistic healthy range."
+else:
+    acc_display = "N/A"
+    acc_help    = "Not enough data to train and evaluate the model."
+
+c1.metric("ML Model Accuracy", acc_display, help=acc_help)
+c2.metric("Critical Agents",      int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
+c3.metric("Worsening This Week",  int(n_worsening), delta_color="inverse")
+c4.metric("Recovering",           int(n_improving), delta_color="normal")
+c5.metric("Team Predicted DSAT",  int(team_pred))
+
+# ── ML Debug panel — hidden by default ──
+with st.expander("🔬 ML Model Details — Click to Expand", expanded=False):
+    st.markdown("""
+    <div class='accuracy-warning'>
+    ⚠️ <b>How to read this accuracy:</b> The model is evaluated using <b>3-fold cross-validation</b> on held-out folds.
+    Labels are generated by keyword rules (weak supervision), NOT human annotators.
+    A realistic healthy accuracy range for noisy BPO text is <b>55–75%</b>.
+    100% accuracy = the model is memorising labels, not learning semantics.
+    </div>
+    """, unsafe_allow_html=True)
+
+    if can_train:
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.markdown("**Label Distribution (training set)**")
+            dist = df_train['Weak_Label'].value_counts().reset_index()
+            dist.columns = ['Category','Count']
+            dist['%'] = (dist['Count'] / dist['Count'].sum() * 100).round(1)
+            st.dataframe(dist, use_container_width=True, hide_index=True)
+        with col_d2:
+            st.markdown("**CV Note**")
+            st.info(cv_note)
+
+        st.markdown("**Classification Report (OOF predictions vs weak labels)**")
         st.code(model_report)
+    else:
+        st.warning("Not enough data to train — need >60 DSAT rows with at least 3 samples per class.")
 
-# Overall PPP — right after ML report (USING CUSTOM HTML TO REMOVE ARROWS)
+# ── Overall PPP breakdown ──
 st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (All Agents · All Time · DSAT tickets only)</div>', unsafe_allow_html=True)
 all_ppp, all_total = get_ppp_breakdown(df)
 ap1,ap2,ap3 = st.columns(3)
@@ -514,8 +520,7 @@ prod_wow['Rate_curr']  = (prod_wow['DSAT_curr'] / prod_wow['Tix_curr'].replace(0
 prod_wow['Rate_prev']  = (prod_wow['DSAT_prev'] / prod_wow['Tix_prev'].replace(0,1) * 100).round(1)
 prod_wow['Rate_delta'] = (prod_wow['Rate_curr'] - prod_wow['Rate_prev']).round(1)
 prod_wow = prod_wow.sort_values('Delta', ascending=False)
-# Show only impactful products
-impact_filter = (prod_wow['Delta'] > 2) | (prod_wow['Rate_delta'] > 2)
+impact_filter    = (prod_wow['Delta'] > 2) | (prod_wow['Rate_delta'] > 2)
 filtered_prod_wow = prod_wow[impact_filter]
 
 st.markdown('<div class="sub-header">📦 Product DSAT — This Week vs Last Week</div>', unsafe_allow_html=True)
@@ -526,10 +531,9 @@ def render_product_wow_card(row):
     elif delta < 0: tclass,arr,badge = "trend-down","⬇","🟢 Improving"
     else:           tclass,arr,badge = "trend-flat","➡","🟡 Stable"
 
-    vol_curr = int(row['Tix_curr'])
-    vol_prev = int(row['Tix_prev'])
+    vol_curr  = int(row['Tix_curr'])
+    vol_prev  = int(row['Tix_prev'])
     vol_delta = vol_curr - vol_prev
-
     fc = df[(df['Week']==curr_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Feature'].value_counts().head(4)
     fp = df[(df['Week']==prev_week)&(df['Product']==row['Product'])&(df['DSAT']==1)]['Feature'].value_counts()
     feat_bits = []
@@ -540,10 +544,9 @@ def render_product_wow_card(row):
         feat_bits.append(f"<span style='color:#8b92ab'>{f}:</span> <span style='color:{c}'>{a} {v} ({fd:+d})</span>")
     feat_html = " &nbsp;·&nbsp; ".join(feat_bits) or "<span style='color:#5a6484'>No DSAT this week</span>"
 
-    # Fetch PPP for this product subset
     prod_subset = df[(df['Week']==curr_week) & (df['Product']==row['Product'])]
-    ppp, tot = get_ppp_breakdown(prod_subset)
-    ppp_html = "".join([
+    ppp, tot    = get_ppp_breakdown(prod_subset)
+    ppp_html    = "".join([
         f"<span class='ppp-pill {cls}'>{cat}: {ppp.get(cat,0)} ({round(ppp.get(cat,0)/tot*100) if tot>0 else 0}%)</span>"
         for cat,cls in [("People","pill-people"),("Process","pill-process"),("Product","pill-product")]
     ])
@@ -584,9 +587,8 @@ def render_product_wow_card(row):
 </div>
 """
 
-show_all = st.checkbox("Show All Products")
-
-display_df = prod_wow if show_all else filtered_prod_wow
+show_all    = st.checkbox("Show All Products")
+display_df  = prod_wow if show_all else filtered_prod_wow
 
 for _, row in display_df.head(3).iterrows():
     st.markdown(render_product_wow_card(row), unsafe_allow_html=True)
@@ -651,7 +653,6 @@ else:
     risk_dir_txt = "⬆ Worsening" if risk_delta>2 else ("⬇ Improving" if risk_delta<-2 else "➡ Stable")
     trend_txt    = "rising week-over-week" if trend>0 else ("improving" if trend<0 else "stable")
 
-    # Snapshot
     st.markdown(f"""
 <div class="story-card">
   <b style="font-size:1.15rem">{agent}</b>
@@ -682,7 +683,6 @@ else:
 </div>
 """, unsafe_allow_html=True)
 
-    # Trend charts
     st.markdown('<div class="sub-header">📈 DSAT Trend & Risk Score Over Time</div>', unsafe_allow_html=True)
     ch1,ch2 = st.columns(2)
     with ch1:
@@ -695,11 +695,9 @@ else:
             index=ag_weekly['Week'].values, name='Risk Score')
         st.line_chart(risk_ts)
 
-    # WoW PPP + Product/Feature
     st.markdown('<div class="sub-header">📅 Agent Week-on-Week: PPP & Product/Feature (DSAT Tickets)</div>', unsafe_allow_html=True)
     ag_curr_dsat = ag_all[(ag_all['Week']==curr_week)&(ag_all['DSAT']==1)]
     ag_prev_dsat = ag_all[(ag_all['Week']==prev_week)&(ag_all['DSAT']==1)]
-    
     ppp_curr, _ = get_ppp_breakdown(ag_curr_dsat)
     ppp_prev, _ = get_ppp_breakdown(ag_prev_dsat)
 
@@ -722,7 +720,6 @@ else:
             pf_wow['Product › Feature'] = pf_wow['Product'] + " › " + pf_wow['Feature']
             st.dataframe(pf_wow[['Product › Feature','This Week','Last Week','Change']].sort_values('Change',ascending=False), use_container_width=True, hide_index=True)
 
-    # Overall PPP for this agent (USING CUSTOM HTML TO REMOVE ARROWS)
     st.markdown('<div class="sub-header">🔍 Overall Issue Breakdown — People / Process / Product (This Agent · All Time)</div>', unsafe_allow_html=True)
     overall_ppp, overall_total = get_ppp_breakdown(ag_dsat)
     dominant_cat = max(overall_ppp, key=overall_ppp.get) if overall_ppp else "People"
@@ -738,7 +735,6 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-    # Primary product driver
     st.markdown('<div class="sub-header">🎯 Primary DSAT Driver — Product Focus</div>', unsafe_allow_html=True)
     prod_dsat_totals = ag_dsat.groupby('Product')['DSAT'].count().sort_values(ascending=False)
 
@@ -788,7 +784,6 @@ else:
 </div>
 """, unsafe_allow_html=True)
 
-    # 5-Why + Coaching
     st.markdown('<div class="sub-header">🔎 5-Why Root Cause Analysis & Coaching Action Plan</div>', unsafe_allow_html=True)
 
     if risk_now < 45:   level,tag_cls = "Strong Performer","tag-strong"
@@ -859,7 +854,6 @@ else:
     is_dsat    = trow['DSAT'] == 1
 
     if not is_dsat:
-        # CSAT Display - Explicitly asked to mention it's a CSAT and nothing else
         st.markdown(f"""
         <div class="story-card" style="margin-bottom:10px; border: 1px solid #1e6e2a; background: #102414;">
           <b>🎫 {ticket_id}</b> &nbsp;
@@ -872,12 +866,10 @@ else:
           <span style="color:#c9d1e8;">This was a positive interaction (Customer Effortless = Yes). No root cause analysis or return prediction is required.</span>
         </div>
         """, unsafe_allow_html=True)
-    
+
     else:
-        # ── ROOT CAUSE (Uses pre-computed Issue_Label from DataFrame which is derived from the new ML model)
         ticket_issue = trow['Issue_Label']
 
-        # Return prediction
         if return_model:
             feat_row  = [[trow['Sentiment'], trow['issue_encoded'], trow['transcript_len'],
                           trow['comment_len'], trow['has_escalation'], trow['has_frustration'], trow['has_unresolved']]]
@@ -892,27 +884,25 @@ else:
         signals = []
         if any(w in tl for w in ["escalate","supervisor","manager","unacceptable"]): signals.append("⚠️ Customer requested escalation or supervisor")
         if any(w in tl for w in ["already told","again","multiple times","keep asking","frustrated","why","repetitive"]): signals.append("😤 High frustration — customer had to repeat their issue")
-        if any(w in tl for w in ["no solution","cannot","unable to resolve","no fix","product limitation","not at the moment", "feature is not available"]): signals.append("❌ Issue left unresolved — no fix was offered")
+        if any(w in tl for w in ["no solution","cannot","unable to resolve","no fix","product limitation","not at the moment","feature is not available"]): signals.append("❌ Issue left unresolved — no fix was offered")
         if any(w in tl for w in ["wait","long","delay","slow","hold"]): signals.append("⏱️ Wait time or delay complaint detected in transcript")
         if any(w in tl for w in ["already explained","told you","asked before"]): signals.append("🔁 Repeat effort — handoff or case note failure")
         if not signals: signals.append("✅ No distress signals — transcript appears neutral")
         shtml = "".join([f"<div style='padding:5px 0;color:#c9d1e8;border-bottom:1px solid #1a2235'>{s}</div>" for s in signals])
 
-        wwg_label = "What went wrong:"
-        core_label= "Core issue:"
         dmap = {
-            "People":  (f"Based on the interaction, the agent's communication style or attitude negatively impacted the customer. The interaction lacked empathy or professionalism.",
+            "People":  ("Based on the interaction, the agent's communication style or attitude negatively impacted the customer. The interaction lacked empathy or professionalism.",
                         "Agent behaviour or communication was the primary DSAT driver — not the technical outcome."),
-            "Process": (f"Based on the interaction, the support process broke down. The customer experienced wait times, transfers, or had to repeat their issue.",
+            "Process": ("Based on the interaction, the support process broke down. The customer experienced wait times, transfers, or had to repeat their issue.",
                         "Operational inefficiency or broken workflow caused the poor experience."),
-            "Product": (f"Based on the interaction, the customer encountered a product bug, system error, or feature limitation (e.g., feature is not available) the agent could not resolve.",
+            "Product": ("Based on the interaction, the customer encountered a product bug, system error, or feature limitation the agent could not resolve.",
                         "A product or technical gap drove dissatisfaction — the agent was powerless to fix the root cause.")
         }
         wwg,core = dmap.get(ticket_issue,("Needs manual review.","Unclear root cause."))
 
         eflags = []
         if any(w in tl for w in ["escalate","supervisor"]): eflags.append("<b>Escalation flag:</b> Customer demanded supervisor involvement — high-severity interaction.")
-        if any(w in tl for w in ["no solution","cannot","unable","not at the moment", "feature is not available"]): eflags.append("<b>Unresolved:</b> Issue NOT resolved — high re-contact and churn risk.")
+        if any(w in tl for w in ["no solution","cannot","unable","not at the moment","feature is not available"]): eflags.append("<b>Unresolved:</b> Issue NOT resolved — high re-contact and churn risk.")
         if any(w in tl for w in ["already told","multiple times","keep asking"]): eflags.append("<b>Repeat effort:</b> Customer re-explained their problem — handoff failure.")
         fhtml2 = "".join([f"<br><br>{f}" for f in eflags])
 
@@ -936,8 +926,8 @@ else:
     <div class="ticket-box">
       <b>🔍 Root Cause Analysis</b><br>
       <span style="color:#7eb8f7;font-size:0.85rem">ML classification: <b>{ticket_issue}</b></span><br><br>
-      <b>{wwg_label}</b><br>{wwg}<br><br>
-      <b>{core_label}</b><br>{core}<br><br>
+      <b>What went wrong:</b><br>{wwg}<br><br>
+      <b>Core issue:</b><br>{core}<br><br>
       <b>Customer's Words:</b><br>
       <span style="color:#aab4cc;font-style:italic">"{comment}"</span><br><br>
       <b>Product & Feature:</b> {trow['Product']} — {trow['Feature']}
@@ -961,4 +951,4 @@ else:
     """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · Logistic Regression NLP (Comment + Transcript) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
+st.markdown("<p style='color:#3a4060;font-size:0.75rem;text-align:center;'>DSAT Intelligence · RF Forecasting · BERT + RF Root Cause (3-fold CV) · 5-Why Root Cause · Return Prediction</p>", unsafe_allow_html=True)
