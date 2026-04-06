@@ -6,3 +6,5 @@ scipy
 textblob
 xgboost
 google-generativeai
+sentence-transformers
+torch
