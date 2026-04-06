@@ -432,9 +432,12 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 c1,c2,c3,c4,c5 = st.columns(5)
-c1.metric("ML Model Accuracy", f"{round(nlp_accuracy*100,1)}%",
-          help="Model uses RandomForest with BERT embeddings trained on DSAT interactions (comments + transcripts) to identify root causes across People, Process, and Product."
-c2.metric("Critical Agents",     int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
+c1.metric(
+    "ML Model Accuracy",
+    f"{round(nlp_accuracy*100,1)}%",
+    help="Model uses RandomForest with BERT embeddings trained on DSAT interactions (comments + transcripts) to identify root causes across People, Process, and Product."
+)
+c2.metric("Critical Agents", int(n_critical), delta=f"{n_critical} need action", delta_color="inverse")
 c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
 c4.metric("Recovering",          int(n_improving), delta_color="normal")
 c5.metric("Team Predicted DSAT", int(team_pred))
