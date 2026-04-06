@@ -188,14 +188,28 @@ def get_label(text):
 
 df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
 
-# ✅ Remove weak/noisy rows (IMPORTANT — avoids fake accuracy)
-df_dsat = df_dsat[
-    df_dsat['Combined_Text'].apply(
-        lambda x: sum(w in str(x).lower() for w in PRODUCT_KW + PEOPLE_KW + PROCESS_KW) >= 2
-    )
-]
+# Step 1: Create labels FIRST
+df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
 
+# ─────────────────────────────────────────────
+# ✅ STRONG SIGNAL FILTER (FIX FAKE ACCURACY)
+# ─────────────────────────────────────────────
+
+def strong_signal(text):
+    t = str(text).lower()
+    return (
+        sum(w in t for w in PRODUCT_KW) >= 2 or
+        sum(w in t for w in PEOPLE_KW) >= 2 or
+        sum(w in t for w in PROCESS_KW) >= 2
+    )
+
+# Step 2: Apply filtering
+df_dsat = df_dsat[df_dsat['Combined_Text'].apply(strong_signal)]
+
+# Step 3: Remove "Other"
 df_dsat = df_dsat[df_dsat['True_Label'] != "Other"]
+
+st.write(df_dsat['True_Label'].value_counts())
 
 # Initialize
 nlp_accuracy = 0.0
@@ -229,23 +243,29 @@ if (
         random_state=42
     )
 
-    # ✅ REAL CROSS VALIDATION
-    from sklearn.model_selection import StratifiedKFold, cross_val_predict
+    from sklearn.model_selection import train_test_split
 
-    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
+# Split data (for evaluation only)
+X_train, X_test, y_train, y_test = train_test_split(
+    X_embeddings,
+    y,
+    test_size=0.25,
+    stratify=y,
+    random_state=42
+)
 
-    preds = cross_val_predict(
-        bert_classifier,
-        X_embeddings,
-        y,
-        cv=skf
-    )
+# Train model
+bert_classifier.fit(X_train, y_train)
 
-    nlp_accuracy = accuracy_score(y, preds)
-    model_report = classification_report(y, preds)
+# Evaluate on unseen data
+preds = bert_classifier.predict(X_test)
 
-    # ✅ FINAL TRAIN
-    bert_classifier.fit(X_embeddings, y)
+# Real accuracy
+nlp_accuracy = accuracy_score(y_test, preds)
+model_report = classification_report(y_test, preds)
+
+# 🔥 IMPORTANT: retrain on FULL data for production use
+bert_classifier.fit(X_embeddings, y)
 
 # 🧠 DEBUG SECTION (BETTER UI)
 st.markdown("### 🧠 ML Training Debug")
