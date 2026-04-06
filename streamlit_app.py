@@ -6,11 +6,11 @@ from collections import Counter
 
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, classification_report, accuracy_score
 import warnings
+from sentence_transformers import SentenceTransformer
 warnings.filterwarnings('ignore')
+bert_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -105,6 +105,24 @@ weeks_sorted = sorted(df['Week'].unique())
 curr_week    = weeks_sorted[-1]
 prev_week    = weeks_sorted[-2] if len(weeks_sorted) >= 2 else curr_week
 
+def split_text(text, chunk_size=250):
+    words = str(text).split()
+    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+
+def get_bert_embedding(text):
+    chunks = split_text(text)
+
+    embeddings = []
+    for chunk in chunks:
+        emb = bert_model.encode(chunk)
+        embeddings.append(emb)
+
+    if len(embeddings) == 1:
+        return embeddings[0]
+
+    weights = np.linspace(0.8, 1.5, len(embeddings))
+    return np.average(embeddings, axis=0, weights=weights)
+
 # ─────────────────────────────────────────────
 # SENTIMENT
 # ─────────────────────────────────────────────
@@ -142,16 +160,14 @@ def rule_sentiment(text):
 
 df['Sentiment'] = df['Combined_Text'].apply(rule_sentiment)
 # ─────────────────────────────────────────────
-# CLEAN ML ROOT CAUSE MODEL (FIXED)
 # ─────────────────────────────────────────────
-
-from sklearn.model_selection import StratifiedKFold
-from sklearn.pipeline import Pipeline
+# NEW ML BERT ROOT CAUSE MODEL 
+# ─────────────────────────────────────────────
 
 # Only DSAT data
 df_dsat = df[df['DSAT'] == 1].copy()
 
-# Better labeling (less dumb keywording)
+# Labeling using weak supervision (keywords)
 def get_label(text):
     t = str(text).lower()
 
@@ -169,47 +185,79 @@ def get_label(text):
         return "Other"
 
     return max(scores, key=scores.get)
+
 df_dsat['True_Label'] = df_dsat['Combined_Text'].apply(get_label)
+
+# ✅ Remove weak/noisy rows (IMPORTANT — avoids fake accuracy)
+df_dsat = df_dsat[
+    df_dsat['Combined_Text'].apply(
+        lambda x: sum(w in str(x).lower() for w in PRODUCT_KW + PEOPLE_KW + PROCESS_KW) >= 2
+    )
+]
+
 df_dsat = df_dsat[df_dsat['True_Label'] != "Other"]
 
+# Initialize
 nlp_accuracy = 0.0
 model_report = ""
+bert_classifier = None
 
-if len(df_dsat) > 20 and df_dsat['True_Label'].nunique() > 1:
+# Train ML model only if enough data
+label_counts = df_dsat['True_Label'].value_counts()
 
-    X_text = df_dsat['Combined_Text']
+if (
+    len(df_dsat) > 50 and
+    df_dsat['True_Label'].nunique() > 1 and
+    all(label_counts >= 10)
+):
+
+    # 🔥 BERT embeddings
+    X_embeddings = np.vstack(
+        df_dsat['Combined_Text'].apply(get_bert_embedding)
+    )
+
     y = df_dsat['True_Label']
 
-    # PIPELINE (clean + proper)
-    model_pipeline = Pipeline([
-        ("tfidf", TfidfVectorizer(
-            stop_words='english',
-            max_features=4000,
-            ngram_range=(1,2),
-            min_df=2
-        )),
-        ("clf", LogisticRegression(
-            max_iter=500,
-            class_weight='balanced'
-        ))
-    ])
+    # ✅ Better than Logistic (non-linear)
+    from sklearn.ensemble import RandomForestClassifier
 
-    # Cross-validation (REAL accuracy)
+    bert_classifier = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=12,
+        min_samples_split=5,
+        class_weight='balanced',
+        random_state=42
+    )
+
+    # ✅ REAL CROSS VALIDATION
+    from sklearn.model_selection import StratifiedKFold, cross_val_predict
+
     skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
-    preds = cross_val_predict(model_pipeline, X_text, y, cv=skf)
+
+    preds = cross_val_predict(
+        bert_classifier,
+        X_embeddings,
+        y,
+        cv=skf
+    )
 
     nlp_accuracy = accuracy_score(y, preds)
     model_report = classification_report(y, preds)
 
-    # Final training on full data
-    model_pipeline.fit(X_text, y)
+    # ✅ FINAL TRAIN
+    bert_classifier.fit(X_embeddings, y)
 
-else:
-    model_pipeline = None
+# 🧠 DEBUG SECTION (BETTER UI)
+st.markdown("### 🧠 ML Training Debug")
 
+dist = df_dsat['True_Label'].value_counts().reset_index()
+dist.columns = ['Category', 'Count']
+dist['Percentage'] = (dist['Count'] / dist['Count'].sum() * 100).round(1)
+
+st.dataframe(dist)
 
 # ─────────────────────────────────────────────
-# CLASSIFICATION FUNCTION (FIXED)
+# ✅ CLASSIFICATION FUNCTION (FINAL)
 # ─────────────────────────────────────────────
 def classify_ticket(text):
     t = str(text).lower()
@@ -218,14 +266,17 @@ def classify_ticket(text):
     people_hits  = sum(w in t for w in PEOPLE_KW)
     process_hits = sum(w in t for w in PROCESS_KW)
 
-    # Strong product override ONLY if dominant
+    # 🔥 Strong override for Product (your business rule)
     if product_hits >= 2 and product_hits > people_hits and product_hits > process_hits:
         return "Product"
 
-    if model_pipeline:
-        return model_pipeline.predict([text])[0]
+    # ✅ ML fallback
+    if bert_classifier is not None:
+        emb = get_bert_embedding(text)
+        return bert_classifier.predict([emb])[0]
 
-    return "Process"
+    return "Other"
+
 
 # Apply classification
 df['Issue_Label'] = "Other"
@@ -382,7 +433,7 @@ st.markdown(f"""
 
 c1,c2,c3,c4,c5 = st.columns(5)
 c1.metric("ML Model Accuracy", f"{round(nlp_accuracy*100,1)}%",
-          help="Model uses a robust Logistic Regression algorithm trained exclusively on DSAT interactions (Comment + Transcript) to correctly identify root causes without CSAT interference.")
+          help="Model uses RandomForest with BERT embeddings trained on DSAT interactions (comments + transcripts) to identify root causes across People, Process, and Product."
 c2.metric("Critical Agents",     int(n_critical),  delta=f"{n_critical} need action", delta_color="inverse")
 c3.metric("Worsening This Week", int(n_worsening), delta_color="inverse")
 c4.metric("Recovering",          int(n_improving), delta_color="normal")
