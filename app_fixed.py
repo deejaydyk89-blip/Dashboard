@@ -505,13 +505,8 @@ c5.metric("Team Predicted DSAT",  int(team_pred))
 # ── ML Debug panel — hidden by default ──
 with st.expander("🔬 ML Model Details — Click to Expand", expanded=False):
     if can_train:
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            st.markdown("**Evaluation Info**")
-            st.info(cv_note)
-        with col_d2:
-            st.markdown("**Classification Report**")
-            st.code(model_report)
+        st.markdown("**Classification Report**")
+        st.code(model_report)
     else:
         st.warning("Not enough data to train — need >60 DSAT rows with at least 6 samples per class.")
 
