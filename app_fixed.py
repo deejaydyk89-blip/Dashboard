@@ -12,7 +12,12 @@ import warnings
 from sentence_transformers import SentenceTransformer
 
 warnings.filterwarnings('ignore')
-bert_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+@st.cache_resource
+def load_bert_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+bert_model = load_bert_model()
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -75,6 +80,18 @@ h2, h3 { color: #c9d1e8; }
 st.markdown("# 🧠 OneStop Solutions")
 st.markdown("<p style='color:#8b92ab;margin-top:-14px;font-size:0.9rem;'>ML-powered Agent Performance & Root Cause Dashboard</p>", unsafe_allow_html=True)
 
+@st.cache_data
+def load_data(file_path):
+    df = None
+    for enc in ["utf-8","latin1","utf-16"]:
+        for sep in [",","|",";"]:
+            try:
+                t = pd.read_csv(file_path, encoding=enc, sep=sep)
+                if t.shape[1] > 1: df = t; break
+            except: continue
+        if df is not None: break
+    return df
+
 # ─────────────────────────────────────────────
 # LOAD DATA
 # ─────────────────────────────────────────────
@@ -82,14 +99,7 @@ file_path = "updated_bpo_customer_experience_dataset.csv"
 if not os.path.exists(file_path):
     st.error("❌ CSV not found."); st.stop()
 
-df = None
-for enc in ["utf-8","latin1","utf-16"]:
-    for sep in [",","|",";"]:
-        try:
-            t = pd.read_csv(file_path, encoding=enc, sep=sep)
-            if t.shape[1] > 1: df = t; break
-        except: continue
-    if df is not None: break
+df = load_data(file_path)
 if df is None or df.empty:
     st.error("❌ Failed to load dataset"); st.stop()
 
@@ -109,30 +119,30 @@ prev_week    = weeks_sorted[-2] if len(weeks_sorted) >= 2 else curr_week
 # ─────────────────────────────────────────────
 # BERT EMBEDDING — FIXED FOR LONG TRANSCRIPTS
 # ─────────────────────────────────────────────
+@st.cache_data
+def compute_all_embeddings(texts):
+    """Batch-encode all texts at once and cache — runs only once per session."""
+    results = []
+    for text in texts:
+        words = str(text).split()
+        half  = 150
+        if len(words) <= 300:
+            chunk = " ".join(words)
+            results.append(bert_model.encode(chunk))
+        else:
+            head = " ".join(words[:half])
+            tail = " ".join(words[-half:])
+            results.append(0.6 * bert_model.encode(head) + 0.4 * bert_model.encode(tail))
+    return results
+
 def get_bert_embedding(text, max_words=300):
-    """
-    Proper long-text BERT embedding:
-    - Takes the FIRST 150 words (customer comment area, most signal-dense)
-    - Takes the LAST 150 words (resolution/outcome, second most signal-dense)
-    - Encodes each half separately and concatenates → richer 768-dim signal
-    - Avoids dilution from middle filler text in long transcripts
-    """
     words = str(text).split()
     half  = max_words // 2
-
     if len(words) <= max_words:
-        chunk = " ".join(words)
-        return bert_model.encode(chunk)
-
-    # Head (complaint framing) + Tail (resolution outcome)
+        return bert_model.encode(" ".join(words))
     head = " ".join(words[:half])
     tail = " ".join(words[-half:])
-
-    emb_head = bert_model.encode(head)
-    emb_tail = bert_model.encode(tail)
-
-    # Weight tail slightly lower — outcome context, not the primary signal
-    return (0.6 * emb_head + 0.4 * emb_tail)
+    return (0.6 * bert_model.encode(head) + 0.4 * bert_model.encode(tail))
 
 
 # ─────────────────────────────────────────────
@@ -232,8 +242,9 @@ can_train = (
 if can_train:
     df_dsat = df_dsat.reset_index(drop=True)
 
-    # ── Train set: ALL rows (full signal for production model) ──
-    X_all  = np.vstack(df_dsat['Combined_Text'].apply(get_bert_embedding).tolist())
+    # ── Batch encode ALL at once (cached after first run) ──
+    all_emb_list = compute_all_embeddings(df_dsat['Combined_Text'].tolist())
+    X_all  = np.vstack(all_emb_list)
     y_all  = np.array(df_dsat['Weak_Label'].tolist(), dtype=str)
 
     # ── Evaluation set: ONLY ambiguous rows (gap ≤ 1) ──
@@ -493,30 +504,14 @@ c5.metric("Team Predicted DSAT",  int(team_pred))
 
 # ── ML Debug panel — hidden by default ──
 with st.expander("🔬 ML Model Details — Click to Expand", expanded=False):
-    st.markdown("""
-    <div class='accuracy-warning'>
-    ⚠️ <b>How to read this score:</b> Dummy/synthetic datasets always give 100% because 
-    the same keywords that create labels also appear in the text — the model just memorises them.
-    To break this, we evaluate <b>only on ambiguous tickets</b> where keyword rules disagreed 
-    (margin ≤1 hit). This forces the model to use semantic understanding, not keyword lookup.
-    Healthy range on real BPO data: <b>45–70%</b>. On dummy data, lift over baseline is shown instead.
-    </div>
-    """, unsafe_allow_html=True)
-
     if can_train:
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            st.markdown("**Label Distribution (DSAT training set)**")
-            dist = df_dsat['Weak_Label'].value_counts().reset_index()
-            dist.columns = ['Category','Count']
-            dist['%'] = (dist['Count'] / dist['Count'].sum() * 100).round(1)
-            st.dataframe(dist, use_container_width=True, hide_index=True)
-        with col_d2:
-            st.markdown("**Evaluation Method**")
+            st.markdown("**Evaluation Info**")
             st.info(cv_note)
-
-        st.markdown("**Classification Report**")
-        st.code(model_report)
+        with col_d2:
+            st.markdown("**Classification Report**")
+            st.code(model_report)
     else:
         st.warning("Not enough data to train — need >60 DSAT rows with at least 6 samples per class.")
 
@@ -574,8 +569,8 @@ st.markdown('<div class="sub-header">📦 Product DSAT — This Week vs Last Wee
 
 def render_product_wow_card(row):
     delta = int(row['Delta']); rd = float(row['Rate_delta'])
-    if delta > 0:   tclass,arr,badge = "trend-up","⬆","🔴 Worsening"
-    elif delta < 0: tclass,arr,badge = "trend-down","⬇","🟢 Improving"
+    if delta > 0:   tclass,arr,badge = "trend-up","⬆","🔴 Rising"
+    elif delta < 0: tclass,arr,badge = "trend-down","⬇","🟢 Declining"
     else:           tclass,arr,badge = "trend-flat","➡","🟡 Stable"
 
     vol_curr  = int(row['Tix_curr'])
@@ -637,11 +632,15 @@ def render_product_wow_card(row):
 show_all    = st.checkbox("Show All Products")
 display_df  = prod_wow if show_all else filtered_prod_wow
 
+shown_products = set()
 for _, row in display_df.head(3).iterrows():
     st.markdown(render_product_wow_card(row), unsafe_allow_html=True)
-if len(prod_wow) > 3:
+    shown_products.add(row['Product'])
+
+remaining = prod_wow[~prod_wow['Product'].isin(shown_products)]
+if len(remaining) > 0:
     with st.expander("🔽 View Remaining Products"):
-        for _, row in prod_wow.iloc[3:].iterrows():
+        for _, row in remaining.iterrows():
             st.markdown(render_product_wow_card(row), unsafe_allow_html=True)
 
 st.markdown('<div class="sub-header">🔧 Top Feature DSAT Movers — This Week vs Last</div>', unsafe_allow_html=True)
